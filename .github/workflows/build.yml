@@ -105,19 +105,25 @@ jobs:
       # kenzok8/openwrt-packages + kenzok8/small-package + mufeng05/turboacc
       # 浅克隆 --depth=1 --filter=tree:0，拉取前校验连通性/分支/目录/Makefile
 
-    # ---------- 8. 第三步：集成独立插件 turboacc（内核补丁/全锥NAT） ----------
+    # ---------- 8. 第二步半：适配 add_turboacc.sh 的 lean 全架构内核版本矩阵 ----------
+    - name: 适配 turboacc 脚本内核版本遍历
+      run: bash scripts/patch_turboacc.sh "$SRC_DIR"
+      # lean 源码 include/ 含 6.1/5.10/5.4/6.6/6.12/5.15/6.18 全架构版本矩阵，
+      # 上游脚本遇不支持的版本会 exit 1；此处改为跳过非目标版本 + 兜底校验
+
+    # ---------- 9. 第三步：集成独立插件 turboacc（内核补丁/全锥NAT） ----------
     - name: 集成 turboacc 组件
       working-directory: ${{ env.SRC_DIR }}
       run: bash package/turboacc/add_turboacc.sh
       # 自动识别源码树内核版本（6.18），打入 shortcut-fe/fullcone 补丁，
       # 安装 kmod-nft-fullcone（全锥形NAT）等组件，与编译内核严格匹配
 
-    # ---------- 9. 清理第三方冲突插件与预编译内核模块 ----------
+    # ---------- 10. 清理第三方冲突插件与预编译内核模块 ----------
     - name: 清理冲突插件与预编译 kmod
       run: bash scripts/cleanup_conflicts.sh "$SRC_DIR"
       # 删除与官方 feeds 重复的包、第三方预编译 .ipk，避免依赖冲突
 
-    # ---------- 10. 应用自定义系统参数（IP/密码/主机名/时区/主题） ----------
+    # ---------- 11. 应用自定义系统参数（IP/密码/主机名/时区/主题） ----------
     - name: 应用自定义系统参数
       run: bash scripts/custom_settings.sh "$SRC_DIR"
       # 后台IP 192.168.2.1 / 密码 12345678 / 主机名 / Asia/Shanghai / Argon
