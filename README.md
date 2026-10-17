@@ -31,6 +31,7 @@ RTX86/
 ├── scripts/
 │   ├── custom_settings.sh       # 后台密码/主机名/网络参数/时区/主题
 │   ├── fetch_thirdparty.sh      # 第三方源浅克隆 + 前置校验
+│   ├── patch_turboacc.sh        # 适配 add_turboacc.sh 的 lean 全架构内核版本矩阵
 │   ├── cleanup_conflicts.sh     # 冲突清理（重复插件/预编译 kmod）
 │   ├── verify_image.sh          # 镜像校验（分区/格式/squashfs 完整性）
 │   ├── package_firmware.sh      # 时间戳打包 + 多余镜像清理

@@ -102,7 +102,8 @@ for item in "${TURBOACC_ITEMS[@]}"; do
   fi
 done
 # turboacc 内核补丁目录（hack-<版本> 随上游内核适配动态变化，校验至少存在一个）
-HACK_DIR=$(ls -d package/turboacc/custom/hack-* 2>/dev/null | head -1)
+# 注意 || true: set -o pipefail 下 ls 无匹配(exit 2) 会经管道杀死脚本
+HACK_DIR=$(ls -d package/turboacc/custom/hack-* 2>/dev/null | head -1 || true)
 if [ -n "$HACK_DIR" ]; then
   echo "    找到: $HACK_DIR (内核补丁目录)"
 else

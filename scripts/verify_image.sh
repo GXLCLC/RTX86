@@ -36,7 +36,7 @@ file "$IMG" | grep -qi "DOS/MBR boot sector" \
 gzip -t "$IMG_GZ" || { echo "错误: $IMG_GZ gzip 结构损坏"; exit 1; }
 echo "gzip 完整性: 通过"
 
-echo "==> [3/5] GPT 分区表解析"
+echo "==> [3/5] 分区表解析（MBR/GPT 均可识别）"
 sfdisk --json "$IMG" > /tmp/part.json
 jq -r '.partitiontable.partitions[] | "分区 \(.node): start=\(.start) size=\(.size) sectors (\(.size*512/1024/1024) MiB)"' /tmp/part.json
 # rootfs 分区取扇区数最大的分区（boot 分区远小于 rootfs）

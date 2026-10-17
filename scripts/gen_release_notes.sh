@@ -14,7 +14,7 @@ CONFIG_FILE="$REPO_ROOT/config/x86_64.config"
 COMMIT=$(git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")
 COMMIT_SHORT=$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# ---- 内核版本（优先取编译产物 utsrelease.h，回退 include/kernel-*） ----
+# ---- 内核版本（优先取编译产物 utsrelease.h，回退按 x86/64 的 KERNEL_PATCHVER） ----
 KVER=""
 for f in "$SRC_DIR"/build_dir/target-*/linux-*/include/generated/utsrelease.h; do
   if [ -f "$f" ]; then
@@ -23,8 +23,13 @@ for f in "$SRC_DIR"/build_dir/target-*/linux-*/include/generated/utsrelease.h; d
   fi
 done
 if [ -z "$KVER" ]; then
-  KVER=$(grep -m1 "^LINUX_VERSION-" "$SRC_DIR"/include/kernel-* 2>/dev/null \
-    | sed 's/.*= *//' | tr -d '[:space:]' | sed 's/^\.//')
+  # 注意: 不能直接 grep include/kernel-* —— lean 源码含全架构版本矩阵
+  # (5.4~6.18 共 7 个)，字典序首个文件是 kernel-5.10，会取错版本；
+  # 必须按 target/linux/x86/64/Makefile 的 KERNEL_PATCHVER 取 x86_64 实际版本
+  X86_KV=$(sed -n 's/^KERNEL_PATCHVER[: ]*=[ ]*//p' "$SRC_DIR/target/linux/x86/64/Makefile" 2>/dev/null | head -1 || true)
+  if [ -n "$X86_KV" ] && [ -f "$SRC_DIR/include/kernel-$X86_KV" ]; then
+    KVER="${X86_KV}$(sed -n "s/^LINUX_VERSION-${X86_KV} *= *//p" "$SRC_DIR/include/kernel-$X86_KV" | tr -d '[:space:]')"
+  fi
 fi
 [ -n "$KVER" ] || KVER="unknown"
 

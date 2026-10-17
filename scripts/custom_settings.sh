@@ -28,12 +28,31 @@ grep "^root:" package/base-files/files/etc/shadow
 
 echo "==> [3/6] 主机名: OpenWrt"
 echo "OpenWrt" > package/base-files/files/etc/hostname
-sed -i "s/option hostname '.*'/option hostname 'OpenWrt'/" \
-  package/base-files/files/etc/config/system
+# lean 源码的 package/base-files/files/etc/ 下没有 config/ 目录
+# （默认 uci 配置由首次启动的 board.d/config_generate 运行时生成），
+# 因此此处对 etc/config/system 做存在性处理: 存在则替换, 不存在则创建最小配置
+SYSTEM_CFG="package/base-files/files/etc/config/system"
+if [ -f "$SYSTEM_CFG" ]; then
+  sed -i "s/option hostname '.*'/option hostname 'OpenWrt'/" "$SYSTEM_CFG"
+  grep -q "option hostname" "$SYSTEM_CFG" || \
+    sed -i "/^config system/a\	option hostname 'OpenWrt'" "$SYSTEM_CFG"
+else
+  mkdir -p package/base-files/files/etc/config
+  cat > "$SYSTEM_CFG" <<'EOF'
+config system
+	option hostname 'OpenWrt'
+	option zonename 'Asia/Shanghai'
+	option timezone 'CST-8'
+EOF
+  echo "    已创建 $SYSTEM_CFG（lean 源码默认不含该文件，此处补齐最小配置）"
+fi
+grep "hostname" "$SYSTEM_CFG"
 
 echo "==> [4/6] 时区: Asia/Shanghai"
-sed -i "s/option zonename '.*'/option zonename 'Asia\/Shanghai'/" \
-  package/base-files/files/etc/config/system
+# 上一步已保证 $SYSTEM_CFG 存在，此处直接替换 zonename
+sed -i "s/option zonename '.*'/option zonename 'Asia\/Shanghai'/" "$SYSTEM_CFG"
+grep -q "option zonename" "$SYSTEM_CFG" || \
+  sed -i "/^config system/a\	option zonename 'Asia/Shanghai'" "$SYSTEM_CFG"
 echo "CST-8" > package/base-files/files/etc/TZ # POSIX TZ（busybox 生效）
 
 echo "==> [5/6] 默认 LuCI 主题: Argon"
@@ -47,6 +66,7 @@ else
 fi
 
 echo "==> [6/6] 写入 uci-defaults 兜底脚本（首次启动强制执行）"
+mkdir -p package/base-files/files/etc/uci-defaults
 cat > package/base-files/files/etc/uci-defaults/99-rtx86-settings <<'EOF'
 #!/bin/sh
 # RTX86 默认参数兜底：主题 Argon + 时区 Asia/Shanghai
