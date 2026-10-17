@@ -32,6 +32,12 @@ CONFLICT_DIRS=(
   # ddnsto 保留 kenzok8 源版本，删除 small-package 重复版
   "package/small-package/luci-app-ddnsto"
   "package/small-package/ddnsto"
+  # easytier: small-package 采用容器目录组织，正版在 luci-app-easytier/ 容器内
+  # (luci-app-easytier/{easytier,easytier-noweb,luci-app-easytier})，
+  # 根目录的 easytier / easytier-noweb 为遗留副本，PKG_NAME 与容器内同名，
+  # 双定义会导致依赖解析冲突，删除根目录版保留容器版
+  "package/small-package/easytier"
+  "package/small-package/easytier-noweb"
   # luci-app-turboacc 由 package/turboacc（mufeng05 补丁配套版）接管，
   # 删除官方 feed 版避免同名双定义（源目录 + feeds install 符号链接都要删）
   "feeds/luci/applications/luci-app-turboacc"
@@ -40,7 +46,9 @@ CONFLICT_DIRS=(
 
 echo "==> [1/3] 删除与官方 feeds 重复的第三方插件目录"
 for d in "${CONFLICT_DIRS[@]}"; do
-  if [ -e "$d" ]; then
+  # -L 兜底: 目录被删后其 package/feeds/<feed>/ 下的符号链接会变成断链，
+  # [ -e ] 对断链返回 false，必须用 -L 检测符号链接本身才能清除干净
+  if [ -e "$d" ] || [ -L "$d" ]; then
     rm -rf "$d"
     echo "    已删除冲突目录: $d"
   fi

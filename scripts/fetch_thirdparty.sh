@@ -19,23 +19,21 @@ THIRD_REPOS=(
 )
 
 # ---- 各源中必须存在的插件目录（用于完整性校验） ----
-declare -A NEED_DIRS=(
+# 注意: kenzok8 部分包采用"容器目录"组织（如 small-package/luci-app-easytier/
+# 内部嵌套 easytier/ 与 luci-app-easytier/），因此校验不写死层级，
+# 统一用自适应查找（优先匹配嵌套容器内的路径）。
+declare -A NEED_PKGS=(
   [kenzok8]="ddnsto luci-app-ddnsto"
   [small-package]="adguardhome easytier luci-app-easytier oaf open-app-filter luci-app-oaf"
-  [turboacc]="add_turboacc.sh lede/luci-app-turboacc lede/fullconenat-nft custom/hack-6.18 custom/fullconenat-nft"
+  [turboacc]=""
 )
 
-# ---- 必须存在的 Makefile 文件（用于完整性校验） ----
-NEED_MAKEFILES=(
-  "package/kenzok8/luci-app-ddnsto/Makefile"
-  "package/kenzok8/ddnsto/Makefile"
-  "package/small-package/adguardhome/Makefile"
-  "package/small-package/easytier/Makefile"
-  "package/small-package/luci-app-easytier/Makefile"
-  "package/small-package/oaf/Makefile"
-  "package/small-package/open-app-filter/Makefile"
-  "package/small-package/luci-app-oaf/Makefile"
-  "package/turboacc/lede/luci-app-turboacc/Makefile"
+# turboacc 源固定结构的关键路径
+TURBOACC_ITEMS=(
+  "add_turboacc.sh"
+  "lede/luci-app-turboacc/Makefile"
+  "lede/fullconenat-nft/Makefile"
+  "custom/fullconenat-nft/Makefile"
 )
 
 # ==================== 1. 逐个拉取第三方源 ====================
@@ -66,34 +64,58 @@ done
 
 # ==================== 2. 插件目录完整性校验 ====================
 echo "==> [校验] 第三方源插件目录完整性"
+
+# 在指定源内按包目录名自适应查找含 Makefile 的目录，
+# 按路径深度优先（sort -rn 长路径在前，嵌套容器内的路径优先于
+# 根目录遗留副本），与 cleanup_conflicts.sh 的保留策略保持一致
+find_pkg_dir() {
+  local src="$1" pkg="$2" d
+  for d in $(find "package/$src" -maxdepth 3 -type d -name "$pkg" 2>/dev/null \
+             | awk '{print length, $0}' | sort -rn | cut -d' ' -f2-); do
+    if [ -f "$d/Makefile" ]; then
+      echo "${d#package/$src/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 MISS=0
-for src in "${!NEED_DIRS[@]}"; do
-  for item in ${NEED_DIRS[$src]}; do
-    if [ ! -e "package/$src/$item" ]; then
-      echo "    缺失: package/$src/$item"
+for src in "${!NEED_PKGS[@]}"; do
+  for pkg in ${NEED_PKGS[$src]}; do
+    if p=$(find_pkg_dir "$src" "$pkg"); then
+      echo "    找到: package/$src/$p (含 Makefile)"
+    else
+      echo "    缺失: 源 $src 中未找到含 Makefile 的 $pkg 目录"
       MISS=1
     fi
   done
 done
-if [ "$MISS" -ne 0 ]; then
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  echo "错误: 第三方源插件目录校验失败（上方缺失项）"
-  echo "修复建议: 对应仓库可能调整了目录结构，请到仓库确认最新目录名，"
-  echo "          并同步修改本脚本 NEED_DIRS / NEED_MAKEFILES 列表"
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  exit 1
-fi
 
-# ==================== 3. Makefile 完整性校验 ====================
-echo "==> [校验] 插件 Makefile 完整性"
-for mk in "${NEED_MAKEFILES[@]}"; do
-  if [ ! -f "$mk" ]; then
-    echo "    缺失文件: $mk"
+# turboacc 源关键路径校验（固定结构）
+for item in "${TURBOACC_ITEMS[@]}"; do
+  if [ -e "package/turboacc/$item" ]; then
+    echo "    找到: package/turboacc/$item"
+  else
+    echo "    缺失: package/turboacc/$item"
     MISS=1
   fi
 done
+# turboacc 内核补丁目录（hack-<版本> 随上游内核适配动态变化，校验至少存在一个）
+HACK_DIR=$(ls -d package/turboacc/custom/hack-* 2>/dev/null | head -1)
+if [ -n "$HACK_DIR" ]; then
+  echo "    找到: $HACK_DIR (内核补丁目录)"
+else
+  echo "    缺失: package/turboacc/custom/hack-* 补丁目录"
+  MISS=1
+fi
+
 if [ "$MISS" -ne 0 ]; then
-  echo "错误: Makefile 校验失败，请检查上游仓库变动"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "错误: 第三方源插件校验失败（上方缺失项）"
+  echo "修复建议: 对应仓库可能调整了目录结构，请到仓库确认最新目录名，"
+  echo "          并同步修改本脚本 NEED_PKGS 列表"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
   exit 1
 fi
 
