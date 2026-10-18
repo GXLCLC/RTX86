@@ -70,6 +70,7 @@ RTX86/
 - **拉取优先级**：官方 feeds → 第三方源（kenzok8 两个源 + turboacc）→ 独立插件，全部 `--depth=1 --filter=tree:0` 浅克隆，拉取前校验连通性 / 分支 / 目录 / Makefile；
 - **网络容错**：feeds update 与第三方源克隆均带 3 次重试 + 索引非空校验，瞬时网络抖动不再中断编译（克隆失败的 feed 会静默产出空索引，直到 make 阶段才报错，故必须前置拦截）；
 - **冲突处理**：自动删除第三方源中与官方重复的插件目录与全部预编译 `.ipk`；
+- **同名竞争清理**：OpenWrt 包扫描按**目录名**去重（`include/scan.awk` 的 `PKGS[$NF]`），第三方源中与核心源码包同名的目录（small-package 的 opkg / base-files / firewall / dnsmasq / fullconenat 等 20 余个）会按不可控的文件系统 readdir 顺序随机顶掉核心包——轻则固件混入魔改核心组件，重则 `package/Makefile` 对 `package/system/opkg/host/compile` 的硬依赖断裂直接中断编译；cleanup_conflicts.sh 第 1 步从当前源码树动态提取核心包名并删除第三方同名目录，保证核心源码版唯一且与读取顺序无关；
 - **分区**：rootfs 分区强制 2048 MiB，编译后自动校验分区容量 / 文件格式 / squashfs 完整性，不达标直接终止；
 - **严格编译**：任一软件包编译报错立即终止整体任务，失败自动上传完整日志；
 - **产物**：仅保留 `YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz`，其余镜像自动清理；
