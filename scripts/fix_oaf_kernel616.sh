@@ -29,11 +29,14 @@
 set -uo pipefail
 
 SRC="${1:-lede}"
-cd "$SRC" || exit 1
 
 # 补丁文件随本脚本存放（scripts/patches/），与 cwd 无关
+# 必须在 cd "$SRC" 之前解析: 工作流以相对路径调用（bash scripts/fix_oaf_kernel616.sh），
+# cd 后再用相对 $BASH_SOURCE 解析会落到 $SRC/scripts/ 下，补丁必然找不到
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PATCH_SRC="$SCRIPT_DIR/patches/001-oaf-kernel-6.16-timer-api.patch"
+
+cd "$SRC" || exit 1
 
 PKG_DIR="package/feeds/packages/net/open-app-filter"
 PATCH_NAME="001-oaf-kernel-6.16-timer-api.patch"
