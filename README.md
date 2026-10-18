@@ -71,6 +71,8 @@ RTX86/
 - **网络容错**：feeds update 与第三方源克隆均带 3 次重试 + 索引非空校验，瞬时网络抖动不再中断编译（克隆失败的 feed 会静默产出空索引，直到 make 阶段才报错，故必须前置拦截）；
 - **冲突处理**：自动删除第三方源中与官方重复的插件目录与全部预编译 `.ipk`；
 - **同名竞争清理**：OpenWrt 包扫描按**目录名**去重（`include/scan.awk` 的 `PKGS[$NF]`），第三方源中与核心源码包同名的目录（small-package 的 opkg / base-files / firewall / dnsmasq / fullconenat 等 20 余个）会按不可控的文件系统 readdir 顺序随机顶掉核心包——轻则固件混入魔改核心组件，重则 `package/Makefile` 对 `package/system/opkg/host/compile` 的硬依赖断裂直接中断编译；cleanup_conflicts.sh 第 1 步从当前源码树动态提取核心包名并删除第三方同名目录，保证核心源码版唯一且与读取顺序无关；
+- **补丁确定性注入**：add_turboacc.sh 用 `cp -rf` 把 turboacc 的 5 组补丁（iptables / nftables / libnftnl / firewall / firewall4）覆盖进 lean 源码树，但该脚本无 `set -e`，拷贝失败静默继续——run 6 实测 clone 成功、全程无报错，lean 自带的破损 900 补丁却未被 turboacc 兼容版覆盖，编译 2 小时后死于 iptables 打补丁阶段；inject_turboacc_patches.sh 在 add_turboacc 之后显式重拷 5 组补丁并**逐文件 cmp 校验**，任何缺失/不一致立即 loud failure（秒级失败，而非 2 小时后的编译地狱）；
+- **补丁兼容性预检**：补丁与上游包版本强绑定，源码升级常致"补丁还在、目标文件没了"——lean master 自带 `iptables/patches/900-bcm-fullconenat.patch` 改 `extensions/libxt_NAT.c`，而 iptables 1.8.7 已删除该文件，**即使零第三方干扰，纯净 lean 源码编译 iptables 也必败**；verify_patches.sh 在编译前按 quilt 同序累积干跑全部 28 个目标补丁（源码按 Makefile 真实版本从 netfilter.org / codeload 获取，带重试），不兼容补丁自动隔离至 `patches-disabled/` 留档且不阻断编译（全锥 NAT 的 nftables 路径不受影响）；
 - **分区**：rootfs 分区强制 2048 MiB，编译后自动校验分区容量 / 文件格式 / squashfs 完整性，不达标直接终止；
 - **严格编译**：任一软件包编译报错立即终止整体任务，失败自动上传完整日志；
 - **产物**：仅保留 `YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz`，其余镜像自动清理；
