@@ -88,15 +88,54 @@ jobs:
     # ---------- 5. 浅克隆 lean LEDE 源码（master） ----------
     - name: 克隆 lean LEDE 源码
       run: |
-        # --depth=1 浅克隆，只取最新代码，减少耗时
-        git clone --depth=1 --branch "$SOURCE_BRANCH" "$SOURCE_REPO" "$SRC_DIR"
-        echo "源码 commit: $(git -C "$SRC_DIR" rev-parse HEAD)"
+        # lede 仓库较大（数百 MB），瞬时 TLS 中断会直接杀死任务，带重试
+        for i in 1 2 3; do
+          echo "==> [克隆源码] 第 $i/3 次尝试"
+          rm -rf "$SRC_DIR"
+          if git clone --depth=1 --branch "$SOURCE_BRANCH" "$SOURCE_REPO" "$SRC_DIR"; then
+            echo "源码 commit: $(git -C "$SRC_DIR" rev-parse HEAD)"
+            break
+          fi
+          [ "$i" -lt 3 ] && sleep 15
+        done
+        [ -d "$SRC_DIR/.git" ] || { echo "错误: 克隆 lean LEDE 源码 3 次尝试均失败"; exit 1; }
 
     # ---------- 6. 第一步：同步官方 feeds 软件源 ----------
     - name: 更新并安装官方 feeds
       working-directory: ${{ env.SRC_DIR }}
       run: |
-        ./scripts/feeds update -a # 同步全部官方软件源索引
+        # feeds update 对网络抖动零容忍: 任一 feed 克隆失败即整体退出非零，
+        # 且克隆失败的 feed 会静默产出空索引，直到 make 阶段才报难懂的符号错误。
+        # 此处增加重试 + 索引非空校验，把瞬时网络故障消灭在编译第一步
+        FEED_NAMES=$(grep -E '^src-(git|cpy|svn|hg)' feeds.conf.default | awk '{print $2}')
+        echo "feeds 清单: $FEED_NAMES"
+        ok=0
+        for i in 1 2 3; do
+          echo "==> [feeds update] 第 $i/3 次尝试"
+          if ./scripts/feeds update -a; then
+            empty=""
+            for f in $FEED_NAMES; do
+              # .index 是指向 .tmp/.packageinfo 的符号链接，-s 沿链接检查目标大小
+              [ -s "feeds/$f.index" ] || empty="$empty $f"
+            done
+            if [ -z "$empty" ]; then
+              echo "    全部 feed 索引非空，校验通过"
+              ok=1
+              break
+            fi
+            echo "    警告: 以下 feed 索引为空（克隆静默失败）:$empty"
+          else
+            echo "    警告: feeds update 第 $i 次失败（退出码非零）"
+          fi
+          [ "$i" -lt 3 ] && sleep 15
+        done
+        if [ "$ok" -ne 1 ]; then
+          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          echo "错误: feeds update 3 次尝试均失败，终止编译"
+          echo "修复建议: 多为 GitHub 网络瞬时抖动，重新触发 Run workflow 即可"
+          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+          exit 1
+        fi
         ./scripts/feeds install -a # 安装全部官方软件源包
 
     # ---------- 7. 第二步：拉取第三方软件源（浅克隆 + 前置校验） ----------
@@ -139,7 +178,20 @@ jobs:
     # ---------- 12. 预下载全部软件包源码（命中 DL 缓存） ----------
     - name: 下载全部软件包源码
       working-directory: ${{ env.SRC_DIR }}
-      run: make download -j"$(nproc)" # 多线程下载，缓存命中时极快
+      run: |
+        # 源码包分散在各上游镜像，单点瞬时失败即整体失败；
+        # make download 为增量下载，重试会跳过已成功的包，安全且收敛
+        for i in 1 2 3; do
+          echo "==> [make download] 第 $i/3 次尝试"
+          if make download -j"$(nproc)"; then
+            echo "全部软件包源码下载完成"
+            exit 0
+          fi
+          echo "    警告: 第 $i 次下载存在失败项，退避重试..."
+          sleep 15
+        done
+        echo "错误: make download 3 次尝试后仍有失败项"
+        exit 1
 
     # ---------- 13. 编译固件（严格模式：任意软件包报错立即终止） ----------
     - name: 编译固件

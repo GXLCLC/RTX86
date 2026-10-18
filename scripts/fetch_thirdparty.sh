@@ -37,6 +37,36 @@ TURBOACC_ITEMS=(
 )
 
 # ==================== 1. 逐个拉取第三方源 ====================
+
+# ---- 带重试的连通性校验 ----
+# GitHub 网络瞬时抖动（TLS 中断等）不该毁掉整次编译，检测与克隆均重试 3 次
+check_remote() {
+  local url="$1" branch="$2" i
+  for i in 1 2 3; do
+    if git ls-remote --exit-code --heads "$url" "$branch" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "    -> 连通性检测第 $i/3 次失败，退避重试..."
+    sleep $((i * 5))
+  done
+  return 1
+}
+
+# ---- 带重试的浅克隆 ----
+# 注意: 每次尝试前 rm -rf 目标目录——克隆中断会残留不完整的半成品目录
+clone_repo() {
+  local url="$1" branch="$2" dest="$3" i
+  for i in 1 2 3; do
+    rm -rf "$dest"
+    if git clone --depth=1 --filter=tree:0 --branch "$branch" "$url" "$dest" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "    -> 浅克隆第 $i/3 次失败，退避重试..."
+    sleep $((i * 5))
+  done
+  return 1
+}
+
 for entry in "${THIRD_REPOS[@]}"; do
   dir="${entry%%|*}"
   url="$(echo "$entry" | cut -d'|' -f2)"
@@ -44,10 +74,10 @@ for entry in "${THIRD_REPOS[@]}"; do
 
   echo "==> [拉取] $url (分支 $branch)"
 
-  # 1.1 校验仓库连通性与目标分支存在性
-  if ! git ls-remote --exit-code --heads "$url" "$branch" >/dev/null 2>&1; then
+  # 1.1 校验仓库连通性与目标分支存在性（带重试）
+  if ! check_remote "$url" "$branch"; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo "错误: 仓库 $url 无法连通，或分支 $branch 不存在"
+    echo "错误: 仓库 $url 重试 3 次后仍无法连通，或分支 $branch 不存在"
     echo "修复建议:"
     echo "  1) 检查 GitHub 网络连通性后重试"
     echo "  2) 访问 $url 确认默认分支名是否变更，并同步修改本脚本 THIRD_REPOS"
@@ -55,10 +85,14 @@ for entry in "${THIRD_REPOS[@]}"; do
     exit 1
   fi
 
-  # 1.2 浅克隆子目录（不下载完整仓库历史，减少耗时）
-  rm -rf "package/$dir"
-  git clone --depth=1 --filter=tree:0 --branch "$branch" "$url" "package/$dir" \
-    || { echo "错误: 浅克隆 $url 失败"; exit 1; }
+  # 1.2 浅克隆子目录（不下载完整仓库历史，减少耗时；带重试）
+  if ! clone_repo "$url" "$branch" "package/$dir"; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "错误: 浅克隆 $url 重试 3 次后仍失败"
+    echo "修复建议: 重新触发 Run workflow 即可（多为瞬时网络故障）"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    exit 1
+  fi
   echo "    -> 已浅克隆到 package/$dir ($(du -sh package/$dir | cut -f1))"
 done
 
