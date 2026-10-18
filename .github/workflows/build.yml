@@ -138,26 +138,38 @@ jobs:
         fi
         ./scripts/feeds install -a # 安装全部官方软件源包
 
-    # ---------- 7. 第二步：拉取第三方软件源（浅克隆 + 前置校验） ----------
+    # ---------- 7. 第二步前置：修复 open-app-filter 内核 6.16+ API 兼容性 ----------
+    - name: 修复 open-app-filter 内核兼容性
+      run: bash scripts/fix_oaf_kernel616.sh "$SRC_DIR"
+      # open-app-filter（官方 packages feed 的 kmod-oaf）钉版 2025-07-03，
+      # 内核模块使用 Linux 6.16 已移除的定时器 API（del_timer_sync /
+      # from_timer），lean x86_64 目标 6.18 内核下编译约 3.5 小时后报
+      # implicit declaration 失败（run 7 实证）。上游 destan19 已于
+      # 2025-10-30 修复（bf7b19e662）但官方 feed 未同步；此处把上游
+      # 修复制成 quilt 补丁注入 feed 包，注入前按 Makefile 真实版本
+      # 下载源码干跑校验：版本即钉版 -> 写入补丁；上游已同步 -> 跳过；
+      # 源码结构已变 -> loud failure（不浪费数小时机时）
+
+    # ---------- 8. 第二步：拉取第三方软件源（浅克隆 + 前置校验） ----------
     - name: 拉取第三方软件源
       run: bash scripts/fetch_thirdparty.sh "$SRC_DIR"
       # kenzok8/openwrt-packages + kenzok8/small-package + mufeng05/turboacc
       # 浅克隆 --depth=1 --filter=tree:0，拉取前校验连通性/分支/目录/Makefile
 
-    # ---------- 8. 第二步半：适配 add_turboacc.sh 的 lean 全架构内核版本矩阵 ----------
+    # ---------- 9. 第二步半：适配 add_turboacc.sh 的 lean 全架构内核版本矩阵 ----------
     - name: 适配 turboacc 脚本内核版本遍历
       run: bash scripts/patch_turboacc.sh "$SRC_DIR"
       # lean 源码 include/ 含 6.1/5.10/5.4/6.6/6.12/5.15/6.18 全架构版本矩阵，
       # 上游脚本遇不支持的版本会 exit 1；此处改为跳过非目标版本 + 兜底校验
 
-    # ---------- 9. 第三步：集成独立插件 turboacc（内核补丁/全锥NAT） ----------
+    # ---------- 10. 第三步：集成独立插件 turboacc（内核补丁/全锥NAT） ----------
     - name: 集成 turboacc 组件
       working-directory: ${{ env.SRC_DIR }}
       run: bash package/turboacc/add_turboacc.sh
       # 自动识别源码树内核版本（6.18），打入 shortcut-fe/fullcone 补丁，
       # 安装 kmod-nft-fullcone（全锥形NAT）等组件，与编译内核严格匹配
 
-    # ---------- 10. 强制注入并校验 turboacc 补丁（add_turboacc 的确定性保障） ----------
+    # ---------- 11. 强制注入并校验 turboacc 补丁（add_turboacc 的确定性保障） ----------
     - name: 强制注入 turboacc 补丁
       run: bash scripts/inject_turboacc_patches.sh "$SRC_DIR"
       # add_turboacc.sh 的 cp -rf 无 set -e，失败会静默继续（run 6 实测：
@@ -165,12 +177,12 @@ jobs:
       # 编译 2 小时后死于 iptables 打补丁阶段）。此处显式重拷 5 组补丁并
       # 逐文件 cmp 校验，任何缺失/不一致立即 loud failure
 
-    # ---------- 11. 清理第三方冲突插件与预编译内核模块 ----------
+    # ---------- 12. 清理第三方冲突插件与预编译内核模块 ----------
     - name: 清理冲突插件与预编译 kmod
       run: bash scripts/cleanup_conflicts.sh "$SRC_DIR"
       # 删除与官方 feeds 重复的包、第三方预编译 .ipk，避免依赖冲突
 
-    # ---------- 12. 校验第三方补丁与包版本兼容性（编译前预检） ----------
+    # ---------- 13. 校验第三方补丁与包版本兼容性（编译前预检） ----------
     - name: 校验第三方补丁与包版本兼容
       run: bash scripts/verify_patches.sh "$SRC_DIR"
       # add_turboacc 注入的 fullcone 系列补丁与上游包版本强绑定；
@@ -180,12 +192,12 @@ jobs:
       # 此处按 quilt 同序累积干跑预检，不兼容补丁自动隔离到
       # patches-disabled/ 留档；预检本身永不失败，不阻断无人值守编译
 
-    # ---------- 13. 应用自定义系统参数（IP/密码/主机名/时区/主题） ----------
+    # ---------- 14. 应用自定义系统参数（IP/密码/主机名/时区/主题） ----------
     - name: 应用自定义系统参数
       run: bash scripts/custom_settings.sh "$SRC_DIR"
       # 后台IP 192.168.2.1 / 密码 12345678 / 主机名 / Asia/Shanghai / Argon
 
-    # ---------- 14. 写入编译配置并展开 ----------
+    # ---------- 15. 写入编译配置并展开 ----------
     - name: 写入 x86_64 编译配置
       run: |
         cd "$SRC_DIR"
@@ -193,7 +205,7 @@ jobs:
         cat "../$CONFIG_FILE" >> .config # 追加自定义插件与内核配置
         make defconfig # 重新展开，合并去重
 
-    # ---------- 15. 预下载全部软件包源码（命中 DL 缓存） ----------
+    # ---------- 16. 预下载全部软件包源码（命中 DL 缓存） ----------
     - name: 下载全部软件包源码
       working-directory: ${{ env.SRC_DIR }}
       run: |
@@ -211,7 +223,7 @@ jobs:
         echo "错误: make download 3 次尝试后仍有失败项"
         exit 1
 
-    # ---------- 16. 编译固件（严格模式：任意软件包报错立即终止） ----------
+    # ---------- 17. 编译固件（严格模式：任意软件包报错立即终止） ----------
     - name: 编译固件
       working-directory: ${{ env.SRC_DIR }}
       shell: bash
@@ -220,7 +232,7 @@ jobs:
         # 未使用 -k/--keep-going，任一软件包编译报错 make 立即停止，任务终止
         make -j"$(nproc)" V=s 2>&1 | tee build.log # 全程输出详细日志
 
-    # ---------- 17. 编译失败自动上传完整日志 ----------
+    # ---------- 18. 编译失败自动上传完整日志 ----------
     - name: 上传编译失败日志
       if: failure() # 仅当前面步骤失败时执行
       uses: actions/upload-artifact@v4
@@ -230,23 +242,23 @@ jobs:
         retention-days: 7 # 保留 7 天
         if-no-files-found: warn # 日志缺失时警告不失败
 
-    # ---------- 18. 校验镜像（分区容量/格式/squashfs 完整性，不达标终止） ----------
+    # ---------- 19. 校验镜像（分区容量/格式/squashfs 完整性，不达标终止） ----------
     - name: 校验镜像完整性与分区容量
       run: bash scripts/verify_image.sh "$SRC_DIR/bin/targets/x86/64"
       # 校验 rootfs 分区 >= 2GiB、镜像格式、squashfs 结构、gzip 完整性
 
-    # ---------- 19. 打包时间戳固件并清理多余镜像 ----------
+    # ---------- 20. 打包时间戳固件并清理多余镜像 ----------
     - name: 打包时间戳固件
       run: bash scripts/package_firmware.sh "$SRC_DIR/bin/targets/x86/64" "$OUTPUT_DIR"
       # 产物命名 YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz
       # img.gz 未生成则判定编译失败直接退出（不会走到 Release）
       # 其余 bin 目录多余镜像（vdi/vmdk/efi 等）全部自动清理
 
-    # ---------- 20. 生成 Release 说明（commit/内核版本/插件清单） ----------
+    # ---------- 21. 生成 Release 说明（commit/内核版本/插件清单） ----------
     - name: 生成 Release 说明
       run: bash scripts/gen_release_notes.sh "$SRC_DIR" > release_notes.md
 
-    # ---------- 21. 创建 Release 并上传固件压缩包 ----------
+    # ---------- 22. 创建 Release 并上传固件压缩包 ----------
     - name: 创建 Release 并上传固件
       uses: softprops/action-gh-release@v2
       with:

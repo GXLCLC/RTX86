@@ -1,0 +1,41 @@
+--- a/oaf/src/app_filter.c
++++ b/oaf/src/app_filter.c
+@@ -1565,7 +1565,11 @@
+ 
+ void fini_oaf_timer(void)
+ {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+ 	del_timer_sync(&oaf_timer);
++#else
++	timer_delete_sync(&oaf_timer);
++#endif
+ 	AF_INFO("del oaf timer...ok");
+ }
+ 
+--- a/oaf/src/af_client.c
++++ b/oaf/src/af_client.c
+@@ -574,8 +574,12 @@
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+ static void client_timer_handler(struct timer_list *t)
+ {
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+     af_client_info_t *client = from_timer(client, t, client_timer);
+ #else
++    af_client_info_t *client = timer_container_of(client, t, client_timer);
++#endif
++#else
+ static void client_timer_handler(unsigned long data)
+ {
+     af_client_info_t *client = (af_client_info_t *)data;
+@@ -623,7 +627,11 @@
+         return;
+     }
+     
++#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)
+     del_timer_sync(&client->client_timer);
++#else
++    timer_delete_sync(&client->client_timer);
++#endif
+ }
+ 
+ 
