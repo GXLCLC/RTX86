@@ -205,11 +205,7 @@ jobs:
         cat "../$CONFIG_FILE" >> .config # 追加自定义插件与内核配置
         make defconfig # 重新展开，合并去重
 
-    # ---------- 16. 校验 ustream-ssl 变体唯一性（防共享构建目录污染） ----------
-    - name: 校验 ustream-ssl 变体唯一性
-      run: bash scripts/verify_ustream_variants.sh "$SRC_DIR"
-
-    # ---------- 17. 预下载全部软件包源码（命中 DL 缓存） ----------
+    # ---------- 16. 预下载全部软件包源码（命中 DL 缓存） ----------
     - name: 下载全部软件包源码
       working-directory: ${{ env.SRC_DIR }}
       run: |
@@ -227,7 +223,7 @@ jobs:
         echo "错误: make download 3 次尝试后仍有失败项"
         exit 1
 
-    # ---------- 18. 编译固件（严格模式 + 瞬时故障重试） ----------
+    # ---------- 17. 编译固件（严格模式 + 瞬时故障重试） ----------
     - name: 编译固件
       working-directory: ${{ env.SRC_DIR }}
       shell: bash
@@ -257,7 +253,7 @@ jobs:
         echo "错误: 编译 3 次尝试均失败"
         exit 1
 
-    # ---------- 19. 编译失败自动上传完整日志 ----------
+    # ---------- 18. 编译失败自动上传完整日志 ----------
     - name: 上传编译失败日志
       if: failure() # 仅当前面步骤失败时执行
       uses: actions/upload-artifact@v4
@@ -267,23 +263,23 @@ jobs:
         retention-days: 7 # 保留 7 天
         if-no-files-found: warn # 日志缺失时警告不失败
 
-    # ---------- 20. 校验镜像（分区容量/格式/squashfs 完整性，不达标终止） ----------
+    # ---------- 19. 校验镜像（分区容量/格式/squashfs 完整性，不达标终止） ----------
     - name: 校验镜像完整性与分区容量
       run: bash scripts/verify_image.sh "$SRC_DIR/bin/targets/x86/64"
       # 校验 rootfs 分区 >= 2GiB、镜像格式、squashfs 结构、gzip 完整性
 
-    # ---------- 21. 打包时间戳固件并清理多余镜像 ----------
+    # ---------- 20. 打包时间戳固件并清理多余镜像 ----------
     - name: 打包时间戳固件
       run: bash scripts/package_firmware.sh "$SRC_DIR/bin/targets/x86/64" "$OUTPUT_DIR"
       # 产物命名 YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz
       # img.gz 未生成则判定编译失败直接退出（不会走到 Release）
       # 其余 bin 目录多余镜像（vdi/vmdk/efi 等）全部自动清理
 
-    # ---------- 22. 生成 Release 说明（commit/内核版本/插件清单） ----------
+    # ---------- 21. 生成 Release 说明（commit/内核版本/插件清单） ----------
     - name: 生成 Release 说明
       run: bash scripts/gen_release_notes.sh "$SRC_DIR" > release_notes.md
 
-    # ---------- 23. 创建 Release 并上传固件压缩包 ----------
+    # ---------- 22. 创建 Release 并上传固件压缩包 ----------
     - name: 创建 Release 并上传固件
       uses: softprops/action-gh-release@v2
       with:
