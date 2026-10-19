@@ -34,6 +34,7 @@ RTX86/
 │   ├── patch_turboacc.sh        # 适配 add_turboacc.sh 的 lean 全架构内核版本矩阵
 │   ├── inject_turboacc_patches.sh # turboacc 补丁确定性重拷 + cmp 校验
 │   ├── verify_patches.sh        # 第三方补丁与包版本兼容性编译前预检
+│   ├── verify_ustream_variants.sh # ustream-ssl 变体唯一性校验（防共享构建目录污染）
 │   ├── fix_oaf_kernel616.sh     # open-app-filter 内核 6.16+ API 兼容性修复
 │   ├── cleanup_conflicts.sh     # 冲突清理（重复插件/预编译 kmod）
 │   ├── verify_image.sh          # 镜像校验（分区/格式/squashfs 完整性）
@@ -80,6 +81,7 @@ RTX86/
 - **补丁兼容性预检**：补丁与上游包版本强绑定，源码升级常致"补丁还在、目标文件没了"——lean master 自带 `iptables/patches/900-bcm-fullconenat.patch` 改 `extensions/libxt_NAT.c`，而 iptables 1.8.7 已删除该文件，**即使零第三方干扰，纯净 lean 源码编译 iptables 也必败**；verify_patches.sh 在编译前按 quilt 同序累积干跑全部 28 个目标补丁（源码按 Makefile 真实版本从 netfilter.org / codeload 获取，带重试），不兼容补丁自动隔离至 `patches-disabled/` 留档且不阻断编译（全锥 NAT 的 nftables 路径不受影响）；
 - **open-app-filter 内核 6.16+ 兼容性修复**：官方 packages feed 的 open-app-filter 钉版 2025-07-03（a9e4637b），其 kmod-oaf 内核模块使用 Linux 6.16 已移除的定时器 API（`del_timer_sync` / `from_timer`），lean x86_64 的 6.18 内核下编译约 3.5 小时后报 `implicit declaration` 失败（run 7/9 实证）；上游 destan19/OpenAppFilter 已于 2025-10-30 修复（`bf7b19e662`，6.16+ 改用 `timer_delete_sync()` / `timer_container_of()`，版本守卫保持旧内核兼容）但官方 feed 未同步。fix_oaf_kernel616.sh 在 feeds install 后把该修复制成 quilt 补丁注入 feed 包，注入前按 Makefile 真实版本下载源码干跑校验：版本即钉版 → 写入补丁；上游已同步 → 警告跳过；源码结构已变 → loud failure（秒级失败而非浪费数小时机时）。注意 lean 的 feeds install 会把 feed 分类子目录拍平（`net/` 消失，`package/feeds/packages/open-app-filter` 为指向 `feeds/packages/net/open-app-filter` 的符号链接），脚本动态发现包目录、两种布局兼容；找不到包且配置选了 kmod-oaf 时立即失败（run 9 实证：硬编码 `net/` 路径会静默跳过、补丁不注入、原败点复燃）。按 `include/scan.awk` 规则 feed 包确定性优先于 `package/` 下第三方同名目录，该修复对 kmod-oaf 必然生效；
 - **编译瞬时故障重试**：git 协议的源码包（ncurses、open-app-filter 等）镜像列表为空，download.pl 只能 `git clone` + `git repack`，而 repack 产物哈希与 Makefile 的 `PKG_MIRROR_HASH` 永不相等（canonical tar 重打包 ≠ git 打包），导致**每次构建都删除本地文件重新下载**且构建期无重试保护——run 10 实证：`make download` 阶段 ncurses 哈希不匹配重下成功，构建阶段再次不匹配重下时遇 GitHub 瞬时故障 `fatal: unable to access ... Error 128`，2.5 小时成果作废（run 9 同两处不匹配但重下载均成功故通过）。编译步骤改为 3 次尝试循环：OpenWrt 的 stamp 机制使 make 为增量构建，失败重跑仅重试未完成的包，对瞬时网络故障安全收敛；连续 3 次失败才判定整体失败；
+- **ustream-ssl 变体唯一性**：ustream-ssl 的 Makefile 显式覆盖 `PKG_BUILD_DIR`（lean `include/package.mk` 本可按 `BUILD_VARIANT` 为每个变体隔离构建目录），mbedtls / openssl / wolfssl 三变体共享同一构建目录；本仓库配置存在两个变体来源叠加——`CONFIG_PACKAGE_luci-ssl=y` 经 luci feed 的 collections/luci-ssl 拉入 mbedtls 变体，x86_64 目标（`TARGET_PER_DEVICE_ROOTFS`）的 `DEFAULT_PACKAGES` 含 libustream-openssl 使 openssl 变体 default y——双变体入选后，后构建的变体复用先构建变体的 CMake 缓存与产物，打包出链接错误 SSL 库的 `.so`，ipkg 依赖检查失败（run 11 实证：编译 2.5 小时后 `libustream-openssl` 缺失 `libmbedcrypto.so.16` / `libmbedtls.so.21` / `libmbedx509.so.7`）。变体的 `CONFLICTS` 只写入 ipk 控制字段、构建系统不强制，故配置层必须二选一：保留 luci-ssl 的 mbedtls，在 config/x86_64.config 显式 `# CONFIG_PACKAGE_libustream-openssl is not set`；verify_ustream_variants.sh 在编译前校验恰好一个变体入选，0 个或多个立即 loud failure（沙箱以真实工作流流程复现：目标默认 openssl=y → 追加配置后双变体=y → 加抑制行后仅 mbedtls=y，全量 diff 仅此一行变化）；
 - **分区**：rootfs 分区强制 2048 MiB，编译后自动校验分区容量 / 文件格式 / squashfs 完整性，不达标直接终止；
 - **严格编译**：任一软件包编译报错立即终止整体任务，失败自动上传完整日志；
 - **产物**：仅保留 `YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz`，其余镜像自动清理；
