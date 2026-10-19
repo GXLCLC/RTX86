@@ -38,7 +38,6 @@ PATCH_SRC="$SCRIPT_DIR/patches/001-oaf-kernel-6.16-timer-api.patch"
 
 cd "$SRC" || exit 1
 
-PKG_DIR="package/feeds/packages/net/open-app-filter"
 PATCH_NAME="001-oaf-kernel-6.16-timer-api.patch"
 
 if [ ! -f "$PATCH_SRC" ]; then
@@ -77,11 +76,39 @@ fetch() {
 
 echo "==> [oaf 修复] open-app-filter 内核 6.16+ 定时器 API 兼容性"
 
-# ---- 包不存在（feed 结构调整/未选 oaf）-> 无事可做 ----
-if [ ! -d "$PKG_DIR" ]; then
-  echo "    未找到 $PKG_DIR（feed 结构可能已调整或未安装 oaf），跳过"
+# ---- 定位 open-app-filter 包目录 ----
+# lean 的 scripts/feeds install 会把 feed 的分类子目录拍平:
+#   feeds/packages/net/open-app-filter -> package/feeds/packages/open-app-filter（符号链接）
+# 官方 OpenWrt 保留分类层: package/feeds/packages/net/open-app-filter
+# 两种布局都必须覆盖。run 9 实证: 硬编码 net/ 路径时 lean 布局下目录不存在，
+# 脚本走"未找到→跳过"分支 exit 0（步骤显示成功但补丁未注入），3.5 小时后
+# 编译在原败点复燃——故此处动态发现 + 找不到时按配置决定大声失败
+PKG_DIR=""
+for cand in $(find -L package/feeds -maxdepth 3 -type d -name open-app-filter 2>/dev/null | sort); do
+  case "$cand" in
+    package/feeds/packages/open-app-filter|package/feeds/packages/net/open-app-filter)
+      PKG_DIR="$cand"; break ;;
+  esac
+done
+# 兜底: 其他 feed 提供同名包（罕见）时取第一个
+[ -z "$PKG_DIR" ] && PKG_DIR=$(find -L package/feeds -maxdepth 3 -type d -name open-app-filter 2>/dev/null | sort | head -1)
+
+if [ -z "$PKG_DIR" ]; then
+  # 配置选了 kmod-oaf 而包不存在 -> 编译必败于内核模块阶段，立即大声失败；
+  # 否则仅警告跳过（用户可能已从配置移除 oaf）
+  CONFIG_SRC="$SCRIPT_DIR/../${CONFIG_FILE:-config/x86_64.config}"
+  if grep -qE '^CONFIG_PACKAGE_kmod-oaf=[ym]' "$CONFIG_SRC" 2>/dev/null; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "错误: 配置选择了 kmod-oaf，但 package/feeds 下找不到"
+    echo "      open-app-filter 包目录（feed 安装布局可能已调整）"
+    echo "处置: 核查 ./scripts/feeds install 的实际布局并更新本脚本"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    exit 1
+  fi
+  echo "    警告: package/feeds 下未找到 open-app-filter（配置未选 oaf？），跳过"
   exit 0
 fi
+echo "    包目录: $PKG_DIR"
 
 # ---- 幂等: 补丁已存在且内容一致 -> 跳过 ----
 mkdir -p "$PKG_DIR/patches"
