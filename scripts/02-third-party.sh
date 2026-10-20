@@ -35,13 +35,10 @@ REPO_OAF="https://github.com/destan19/OpenAppFilter.git"         # L4 独立专�
 REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # L4 独立专项：Bandix 前端
 REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立专项：Bandix 后端(eBPF)
 
-# 需要的通用插件清单（L1/L2/L3 三级包源检索对象；独立专项仓不在此清单）
+# 需要的第三方通用插件清单（L2/L3 三级包源检索对象；独立专项仓不在此清单）
 WANT_PKGS=(
-    luci-app-smartdns luci-app-ddnsto luci-app-adguardhome luci-app-easytier
-    luci-app-wechatpush luci-app-mwan3 luci-app-wol
-    luci-app-upnp luci-app-ttyd luci-app-autoreboot luci-app-nlbwmon
+    luci-app-ddnsto luci-app-easytier
 )
-
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
     local repo="$1" branch="$2"
