@@ -12,9 +12,9 @@ LEDE_DIR="${1:?用法: 02-third-party.sh <lede源码目录>}"
 # ========================【第一步：优先写入Lean官方feed源】========================
 FEEDS_CONF="${LEDE_DIR}/feeds.conf.default"
 cat > "$FEEDS_CONF" <<EOF
-src-git packages https://mirror.ghproxy.com/https://github.com/coolsnowwolf/packages.git
-src-git luci https://mirror.ghproxy.com/https://github.com/coolsnowwolf/luci.git;openwrt-25.12
-src-git routing https://mirror.ghproxy.com/https://github.com/coolsnowwolf/routing.git
+src-git packages https://github.com/coolsnowwolf/packages.git
+src-git luci https://github.com/coolsnowwolf/luci.git;openwrt-25.12
+src-git routing https://github.com/coolsnowwolf/routing.git
 EOF
 echo ">> ✅ 【L1】已写入Lean官方feed配置（packages master + luci openwrt-25.12 + routing master）"
 # ========================================================================================
