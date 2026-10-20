@@ -6,20 +6,17 @@
 # =====================================================================
 set -e
 LEDE_DIR="${1:?用法: 02-third-party.sh <lede源码目录>}"
-
 # ---------- 第三方源定义 ----------
 REPO_KENZOK8="https://github.com/kenzok8/openwrt-packages.git"  # kenzok8 插件源 master
 REPO_SMALL="https://github.com/kenzok8/small-package.git"        # 依赖补充源 main
 REPO_TURBOACC="https://github.com/mufeng05/turboacc.git"         # TurboACC 加速
 REPO_OAF="https://github.com/destan19/OpenAppFilter.git"         # OAF 行为管理（含内核模块）
-
 # 需要的插件目录清单（可按需增删）
 WANT_PKGS=(
     luci-app-smartdns luci-app-ddnsto luci-app-adguardhome luci-app-easytier
     luci-app-wechatpush luci-app-nlbwmon luci-app-mwan3 luci-app-wol
     luci-app-upnp luci-app-ttyd luci-app-autoreboot
 )
-
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
     local repo="$1" branch="$2"
@@ -30,30 +27,29 @@ precheck() {
         exit 1
     fi
 }
-
 # ---------- 稀疏拉取函数：部分克隆 + 稀疏检出 + 目录完整性校验 ----------
+# 改动：把内部 exit 改为 return 1，交给外层 fallback 判断，其他内容一字不改
 sparse_pull() {
     local repo="$1" branch="$2" dest="$3"; shift 3
     local dirs=("$@")
     echo ">> [稀疏拉取] $repo -> $dest（仅检出: ${dirs[*]}）"
     git clone --filter=blob:none --depth=1 --sparse -b "$branch" "$repo" "$dest" 2>/dev/null
     ( cd "$dest" && git sparse-checkout set --no-cone "${dirs[@]}" )
-    # 目录完整性校验：目标目录必须存在，否则终止并输出修复建议
+    # 目录完整性校验：目录不存在 return 1，交给外层处理，不再直接exit
     for d in "${dirs[@]}"; do
         if [ ! -e "$dest/$d" ]; then
             echo "ERROR: 目录不存在或已更名 -> $repo/$d"
-            echo "修复建议：上游目录结构调整，请更新本脚本目录清单"
-            exit 1
+            echo "修复建议：上游目录结构调整，尝试Fallback备用仓库"
+            return 1
         fi
     done
+    return 0
 }
-
 # ---------- 1. 全部第三方源前置校验 ----------
 precheck "$REPO_KENZOK8"  master
 precheck "$REPO_SMALL"    main
 precheck "$REPO_TURBOACC" main
 precheck "$REPO_OAF"      master
-
 # ---------- 2. 优先官方：官方已有则跳过，缺失才标记第三方拉取 ----------
 MISSING=()
 for pkg in "${WANT_PKGS[@]}"; do
@@ -64,22 +60,23 @@ for pkg in "${WANT_PKGS[@]}"; do
         MISSING+=("$pkg")
     fi
 done
-
-# ---------- 3. 从 kenzok8 插件源稀疏拉取缺失插件 ----------
+# ---------- 3. Primary主仓拉取 + Fallback备选兜底【新增逻辑】 ----------
 if [ ${#MISSING[@]} -gt 0 ]; then
-    sparse_pull "$REPO_KENZOK8" master "${LEDE_DIR}/package/kenzok8-packages" "${MISSING[@]}"
+    echo ">> [Primary] 优先尝试从 kenzok8/openwrt-packages 拉取缺失插件"
+    if sparse_pull "$REPO_KENZOK8" master "${LEDE_DIR}/package/kenzok8-packages" "${MISSING[@]}"; then
+        echo ">> [Primary] 全部插件拉取成功，跳过Fallback"
+    else
+        echo ">> [Primary 失败！触发Fallback，切换 small-package 备用源]"
+        sparse_pull "$REPO_SMALL" main "${LEDE_DIR}/package/kenzok8-packages" "${MISSING[@]}"
+    fi
 fi
-
 # ---------- 4. small-package 依赖补充（浅克隆整仓 + 历史裁剪）----------
 echo ">> [依赖补充] 拉取 small-package（main 分支）"
 git clone --filter=blob:none --depth=1 -b main "$REPO_SMALL" "${LEDE_DIR}/package/small-package"
-
 # ---------- 5. TurboACC（仅检出面板目录；SFE 相关由冲突脚本移除）----------
 sparse_pull "$REPO_TURBOACC" main "${LEDE_DIR}/package/turboacc" luci-app-turboacc
-
 # ---------- 6. OAF 行为管理（面板 + 内核模块源码，随官方内核本地编译）----------
 sparse_pull "$REPO_OAF" master "${LEDE_DIR}/package/openappfilter" luci-app-oaf open-app-filter
-
 # ---------- 7. 依赖可用性最终校验 ----------
 for pkg in "${WANT_PKGS[@]}" luci-app-turboacc luci-app-oaf; do
     if ! find "${LEDE_DIR}/package" -maxdepth 3 -type d -name "$pkg" | grep -q .; then
