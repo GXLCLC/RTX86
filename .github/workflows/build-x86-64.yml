@@ -69,6 +69,12 @@ jobs:
           fi
           # 浅克隆拉取 master 分支（--depth=1 裁剪提交历史，减少冗余下载）
           git clone --depth=1 -b master https://github.com/coolsnowwolf/lede.git lede
+      #步骤 6.5
+      - name: 【源码修改】强制切换x86内核为6.12
+        run: |
+         cd lede
+          sed -i 's/KERNEL_PATCHVER:=6.18/KERNEL_PATCHVER:=6.12/' target/linux/x86/Makefile
+          sed -i 's/KERNEL_TESTING_PATCHVER:=6.12/KERNEL_TESTING_PATCHVER:=6.18/' target/linux/x86/Makefile
 
       # ---------- 步骤7：拉取源码后立即执行自定义脚本，直接替换源码密码配置文件 ----------
       - name: 【源码定制】写入默认 IP 192.168.2.1 / 密码 12345678 / 主机名 / 时区
