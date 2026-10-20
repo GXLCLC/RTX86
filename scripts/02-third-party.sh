@@ -51,7 +51,7 @@ sparse_pull() {
 # ---------- 1. 全部第三方源前置校验 ----------
 precheck "$REPO_KENZOK8"  master
 precheck "$REPO_SMALL"    main
-precheck "$REPO_TURBOACC" master
+precheck "$REPO_TURBOACC" main
 precheck "$REPO_OAF"      master
 
 # ---------- 2. 优先官方：官方已有则跳过，缺失才标记第三方拉取 ----------
@@ -75,7 +75,7 @@ echo ">> [依赖补充] 拉取 small-package（main 分支）"
 git clone --filter=blob:none --depth=1 -b main "$REPO_SMALL" "${LEDE_DIR}/package/small-package"
 
 # ---------- 5. TurboACC（仅检出面板目录；SFE 相关由冲突脚本移除）----------
-sparse_pull "$REPO_TURBOACC" master "${LEDE_DIR}/package/turboacc" luci-app-turboacc
+sparse_pull "$REPO_TURBOACC" main "${LEDE_DIR}/package/turboacc" luci-app-turboacc
 
 # ---------- 6. OAF 行为管理（面板 + 内核模块源码，随官方内核本地编译）----------
 sparse_pull "$REPO_OAF" master "${LEDE_DIR}/package/openappfilter" luci-app-oaf open-app-filter
