@@ -1,295 +1,171 @@
-# =============================================================
-# RTX86 - lean LEDE x86_64 云编译工作流
-# 源码: coolsnowwolf/lede master  |  目标: x86_64 Generic squashfs
-# 规则: 仅手动触发 / 固定 ubuntu-24.04 / 超时 360 分钟 / 并发锁
-# =============================================================
+# ============================================================
+# LEDE X86_64 云编译工作流（lean 大雕源码）
+# 环境：Ubuntu 24.04 LTS + GitHub Actions
+# 触发：仅手动 workflow_dispatch（关闭所有自动触发）
+# ============================================================
+name: LEDE_X86_64_CloudBuild
 
-name: RTX86-LEDE-x86_64 # 工作流显示名称
-
-# ---------- 触发规则：仅开启 workflow_dispatch 手动触发 ----------
+# ---------- 构建规则：仅手动触发，无 push / pr / schedule 等自动触发 ----------
 on:
-  workflow_dispatch: # 手动触发（Actions 页面点击 Run workflow）
-    inputs: # 手动触发时的可选输入项
-      release_note: # 自定义 Release 备注
-        description: 'Release 附加备注（可留空，将追加到发布说明末尾）'
-        required: false # 非必填
-        default: '' # 默认空
-        type: string # 输入类型为字符串
+  workflow_dispatch:
 
-# ---------- 并发锁：同一分支自动取消正在运行的旧任务 ----------
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }} # 按 工作流+分支 分组
-  cancel-in-progress: true # 新任务启动时取消同组旧任务
-
-# ---------- 权限：开启 GITHUB_TOKEN 写入权限，保障 Release 创建与文件上传 ----------
+# 自动创建 Release 需要仓库写入权限
 permissions:
-  contents: write # 允许创建 Release、上传固件、写缓存
+  contents: write
 
-# ---------- 全局环境变量 ----------
-env:
-  TZ: Asia/Shanghai # 统一时区：Asia/Shanghai
-  SOURCE_REPO: https://github.com/coolsnowwolf/lede # 源码仓库（固定）
-  SOURCE_BRANCH: master # 源码分支（固定 master）
-  SRC_DIR: lede # 源码检出目录名
-  CONFIG_FILE: config/x86_64.config # 固件插件与内核配置文件路径
-  OUTPUT_DIR: output # 固件产物输出目录
-
-# ---------- 编译任务 ----------
 jobs:
-  build-lede: # 任务名称
-    runs-on: ubuntu-24.04 # 固定运行环境 Ubuntu 24.04 LTS
-    timeout-minutes: 360 # Job 级超时 360 分钟
+  build:
+    # ---------- 固定运行环境：Ubuntu 24.04 LTS ----------
+    runs-on: ubuntu-24.04
 
-    steps: # ==================== 步骤开始 ====================
+    steps:
+      # ---------- 步骤1：检出本仓库，获取脚本与编译配置 ----------
+      - name: 【源码准备】检出本仓库（脚本 + 配置）
+        uses: actions/checkout@v4
 
-    # ---------- 1. 检出本仓库（workflow / config / scripts） ----------
-    - name: 检出编译仓库
-      uses: actions/checkout@v4 # 拉取本仓库全部文件
+      # ---------- 步骤2：固件时区固定 Asia/Shanghai，生成发布时间戳 ----------
+      - name: 【环境初始化】固定时区 Asia/Shanghai 并生成固件时间戳
+        run: |
+          sudo timedatectl set-timezone "Asia/Shanghai"
+          echo "RELEASE_TIME=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+          echo "构建时间：$(date '+%Y-%m-%d %H:%M:%S')"
 
-    # ---------- 2. 清理 runner 预装大件，释放磁盘空间 ----------
-    - name: 清理预装组件释放磁盘
-      run: |
-        # GitHub runner 预装组件占用大，删除后为编译腾出空间
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force >/dev/null 2>&1 || true
-        sudo apt-get clean
-        df -h / # 打印磁盘剩余空间
+      # ---------- 步骤3：释放磁盘空间，保证 X86_64 全量编译空间充足 ----------
+      - name: 【环境初始化】释放磁盘空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                       /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
 
-    # ---------- 3. 安装 Ubuntu 24.04 编译依赖 ----------
-    - name: 安装编译依赖
-      run: |
-        sudo apt-get update
-        # 注意: Ubuntu 24.04 的 python3 (3.12) 已移除 distutils，
-        # 且源中无 python3-distutils 包，由 python3-setuptools 提供 distutils 兼容层
-        sudo apt-get install -y build-essential clang flex bison g++ gawk \
-          gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
-          python3 python3-setuptools python3-pip python3-wheel swig unzip \
-          zlib1g-dev file wget xz-utils libelf-dev cpio dosfstools f2fs-tools \
-          squashfs-tools qemu-utils jq openssl
-        # 兜底校验 distutils 可用性，缺失则经 pip 补装 setuptools
-        if ! python3 -c "import distutils" 2>/dev/null; then
-          echo "distutils 不可用，pip 补装 setuptools"
-          sudo pip3 install --break-system-packages setuptools || \
-            pip3 install --user setuptools
-        fi
-        python3 -c "import distutils; print('distutils OK')"
-        echo "编译依赖安装完成"
+      # ---------- 步骤4：安装编译依赖 ----------
+      - name: 【环境初始化】安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 cpio curl device-tree-compiler fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libncurses-dev \
+            libreadline-dev libssl-dev libtool lld llvm mkisofs msmtp nano ninja-build \
+            p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-setuptools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
-    # ---------- 4. 恢复 DL 编译缓存（缓存键绑定源码分支） ----------
-    - name: 恢复 DL 源码包缓存
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.SRC_DIR }}/dl # 缓存 lede/dl 目录（已下载的软件包源码）
-        key: lede-dl-${{ runner.os }}-${{ env.SOURCE_BRANCH }} # 缓存键：OS + 源码分支
-        restore-keys: | # 未命中时回退到同分支/同 OS 的旧缓存
-          lede-dl-${{ runner.os }}-${{ env.SOURCE_BRANCH }}-
-          lede-dl-${{ runner.os }}-
+      # ---------- 步骤5：恢复 DL 缓存，加速二次编译 ----------
+      - name: 【缓存】恢复 DL 缓存加速编译
+        uses: actions/cache@v4
+        with:
+          path: lede/dl
+          key: lede-dl-x86_64-${{ hashFiles('config/X86_64.config') }}
+          restore-keys: lede-dl-x86_64-
 
-    # ---------- 5. 浅克隆 lean LEDE 源码（master） ----------
-    - name: 克隆 lean LEDE 源码
-      run: |
-        # lede 仓库较大（数百 MB），瞬时 TLS 中断会直接杀死任务，带重试
-        for i in 1 2 3; do
-          echo "==> [克隆源码] 第 $i/3 次尝试"
-          rm -rf "$SRC_DIR"
-          if git clone --depth=1 --branch "$SOURCE_BRANCH" "$SOURCE_REPO" "$SRC_DIR"; then
-            echo "源码 commit: $(git -C "$SRC_DIR" rev-parse HEAD)"
-            break
+      # ---------- 步骤6：前置校验仓库与分支，异常直接终止并输出修复建议 ----------
+      - name: 【源码准备】前置校验并拉取 lean LEDE master 分支
+        run: |
+          if ! git ls-remote --heads https://github.com/coolsnowwolf/lede.git master | grep -q master; then
+            echo "ERROR: lean LEDE 仓库不可达或 master 分支不存在"
+            echo "修复建议：检查网络连通性 / 仓库地址 / 分支名是否被上游调整"
+            exit 1
           fi
-          [ "$i" -lt 3 ] && sleep 15
-        done
-        [ -d "$SRC_DIR/.git" ] || { echo "错误: 克隆 lean LEDE 源码 3 次尝试均失败"; exit 1; }
+          # 浅克隆拉取 master 分支（--depth=1 裁剪提交历史，减少冗余下载）
+          git clone --depth=1 -b master https://github.com/coolsnowwolf/lede.git lede
 
-    # ---------- 6. 第一步：同步官方 feeds 软件源 ----------
-    - name: 更新并安装官方 feeds
-      working-directory: ${{ env.SRC_DIR }}
-      run: |
-        # feeds update 对网络抖动零容忍: 任一 feed 克隆失败即整体退出非零，
-        # 且克隆失败的 feed 会静默产出空索引，直到 make 阶段才报难懂的符号错误。
-        # 此处增加重试 + 索引非空校验，把瞬时网络故障消灭在编译第一步
-        FEED_NAMES=$(grep -E '^src-(git|cpy|svn|hg)' feeds.conf.default | awk '{print $2}')
-        echo "feeds 清单: $FEED_NAMES"
-        ok=0
-        for i in 1 2 3; do
-          echo "==> [feeds update] 第 $i/3 次尝试"
-          if ./scripts/feeds update -a; then
-            empty=""
-            for f in $FEED_NAMES; do
-              # .index 是指向 .tmp/.packageinfo 的符号链接，-s 沿链接检查目标大小
-              [ -s "feeds/$f.index" ] || empty="$empty $f"
-            done
-            if [ -z "$empty" ]; then
-              echo "    全部 feed 索引非空，校验通过"
-              ok=1
-              break
-            fi
-            echo "    警告: 以下 feed 索引为空（克隆静默失败）:$empty"
-          else
-            echo "    警告: feeds update 第 $i 次失败（退出码非零）"
+      # ---------- 步骤7：拉取源码后立即执行自定义脚本，直接替换源码密码配置文件 ----------
+      - name: 【源码定制】写入默认 IP 192.168.2.1 / 密码 12345678 / 主机名 / 时区
+        run: bash scripts/01-custom-settings.sh lede
+
+      # ---------- 步骤8：第三方插件前置校验 + 稀疏检出 ----------
+      - name: 【第三方插件】前置校验（连通性/分支/目录/依赖）并稀疏拉取
+        run: bash scripts/02-third-party.sh lede
+
+      # ---------- 步骤9：依赖冲突处理（保留官方内核，仅移除冲突第三方模块） ----------
+      - name: 【冲突处理】保留官方内核，移除 SFE/Shortcut-FE 等冲突模块
+        run: bash scripts/03-conflict-fix.sh lede
+
+      # ---------- 步骤10：写入编译配置并自动补全全套依赖 ----------
+      - name: 【编译配置】写入 config/X86_64.config 并补全依赖
+        run: |
+          cp config/X86_64.config lede/.config
+          cd lede && make defconfig
+          echo "已启用软件包数量：$(grep -c '^CONFIG_PACKAGE.*=y' .config)"
+
+      # ---------- 步骤11：预下载软件包，剔除损坏文件 ----------
+      - name: 【下载】预下载全部软件包
+        run: |
+          cd lede
+          make download -j$(nproc)
+          # 严格模式：删除小于 1KB 的可疑残缺文件，避免编译中途报错
+          find dl -size -1024c -type f -exec rm -f {} \;
+
+      # ---------- 步骤12：严格模式编译，任意包报错立即终止整体编译 ----------
+      - name: 【编译】严格模式编译 X86_64 squashfs 固件
+        shell: bash
+        run: |
+          cd lede
+          echo "开始编译，线程数：$(nproc)"
+          if ! make -j$(nproc) 2>&1 | tee build.log; then
+            echo ">> 并行编译失败，切换单线程详细模式定位错误"
+            make -j1 V=s 2>&1 | tee -a build.log || { echo "ERROR: 编译失败"; exit 1; }
           fi
-          [ "$i" -lt 3 ] && sleep 15
-        done
-        if [ "$ok" -ne 1 ]; then
-          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-          echo "错误: feeds update 3 次尝试均失败，终止编译"
-          echo "修复建议: 多为 GitHub 网络瞬时抖动，重新触发 Run workflow 即可"
-          echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-          exit 1
-        fi
-        ./scripts/feeds install -a # 安装全部官方软件源包
-
-    # ---------- 7. 第二步前置：修复 open-app-filter 内核 6.16+ API 兼容性 ----------
-    - name: 修复 open-app-filter 内核兼容性
-      run: bash scripts/fix_oaf_kernel616.sh "$SRC_DIR"
-      # open-app-filter（官方 packages feed 的 kmod-oaf）钉版 2025-07-03，
-      # 内核模块使用 Linux 6.16 已移除的定时器 API（del_timer_sync /
-      # from_timer），lean x86_64 目标 6.18 内核下编译约 3.5 小时后报
-      # implicit declaration 失败（run 7 实证）。上游 destan19 已于
-      # 2025-10-30 修复（bf7b19e662）但官方 feed 未同步；此处把上游
-      # 修复制成 quilt 补丁注入 feed 包，注入前按 Makefile 真实版本
-      # 下载源码干跑校验：版本即钉版 -> 写入补丁；上游已同步 -> 跳过；
-      # 源码结构已变 -> loud failure（不浪费数小时机时）
-
-    # ---------- 8. 第二步：拉取第三方软件源（浅克隆 + 前置校验） ----------
-    - name: 拉取第三方软件源
-      run: bash scripts/fetch_thirdparty.sh "$SRC_DIR"
-      # kenzok8/openwrt-packages + kenzok8/small-package + mufeng05/turboacc
-      # 浅克隆 --depth=1 --filter=tree:0，拉取前校验连通性/分支/目录/Makefile
-
-    # ---------- 9. 第二步半：适配 add_turboacc.sh 的 lean 全架构内核版本矩阵 ----------
-    - name: 适配 turboacc 脚本内核版本遍历
-      run: bash scripts/patch_turboacc.sh "$SRC_DIR"
-      # lean 源码 include/ 含 6.1/5.10/5.4/6.6/6.12/5.15/6.18 全架构版本矩阵，
-      # 上游脚本遇不支持的版本会 exit 1；此处改为跳过非目标版本 + 兜底校验
-
-    # ---------- 10. 第三步：集成独立插件 turboacc（内核补丁/全锥NAT） ----------
-    - name: 集成 turboacc 组件
-      working-directory: ${{ env.SRC_DIR }}
-      run: bash package/turboacc/add_turboacc.sh
-      # 自动识别源码树内核版本（6.18），打入 shortcut-fe/fullcone 补丁，
-      # 安装 kmod-nft-fullcone（全锥形NAT）等组件，与编译内核严格匹配
-
-    # ---------- 11. 强制注入并校验 turboacc 补丁（add_turboacc 的确定性保障） ----------
-    - name: 强制注入 turboacc 补丁
-      run: bash scripts/inject_turboacc_patches.sh "$SRC_DIR"
-      # add_turboacc.sh 的 cp -rf 无 set -e，失败会静默继续（run 6 实测：
-      # clone 成功无报错，但 lean 破损 900 补丁未被 turboacc 兼容版覆盖，
-      # 编译 2 小时后死于 iptables 打补丁阶段）。此处显式重拷 5 组补丁并
-      # 逐文件 cmp 校验，任何缺失/不一致立即 loud failure
-
-    # ---------- 12. 清理第三方冲突插件与预编译内核模块 ----------
-    - name: 清理冲突插件与预编译 kmod
-      run: bash scripts/cleanup_conflicts.sh "$SRC_DIR"
-      # 删除与官方 feeds 重复的包、第三方预编译 .ipk，避免依赖冲突
-
-    # ---------- 13. 校验第三方补丁与包版本兼容性（编译前预检） ----------
-    - name: 校验第三方补丁与包版本兼容
-      run: bash scripts/verify_patches.sh "$SRC_DIR"
-      # add_turboacc 注入的 fullcone 系列补丁与上游包版本强绑定；
-      # 源码一旦升级，补丁常失效（如 lean iptables 1.8.7 移除
-      # extensions/libxt_NAT.c 后官方 900 补丁必败），且要等编译
-      # 数小时后进入打补丁阶段才爆雷，白白浪费机时。
-      # 此处按 quilt 同序累积干跑预检，不兼容补丁自动隔离到
-      # patches-disabled/ 留档；预检本身永不失败，不阻断无人值守编译
-
-    # ---------- 14. 应用自定义系统参数（IP/密码/主机名/时区/主题） ----------
-    - name: 应用自定义系统参数
-      run: bash scripts/custom_settings.sh "$SRC_DIR"
-      # 后台IP 192.168.2.1 / 密码 12345678 / 主机名 / Asia/Shanghai / Argon
-
-    # ---------- 15. 写入编译配置并展开 ----------
-    - name: 写入 x86_64 编译配置
-      run: |
-        cd "$SRC_DIR"
-        make defconfig # 先生成 target 默认配置（保证 x86/64 目标正确）
-        cat "../$CONFIG_FILE" >> .config # 追加自定义插件与内核配置
-        make defconfig # 重新展开，合并去重
-
-    # ---------- 16. 校验 ustream-ssl 变体唯一性（防共享构建目录污染） ----------
-    - name: 校验 ustream-ssl 变体唯一性
-      run: bash scripts/verify_ustream_variants.sh "$SRC_DIR"
-
-    # ---------- 17. 预下载全部软件包源码（命中 DL 缓存） ----------
-    - name: 下载全部软件包源码
-      working-directory: ${{ env.SRC_DIR }}
-      run: |
-        # 源码包分散在各上游镜像，单点瞬时失败即整体失败；
-        # make download 为增量下载，重试会跳过已成功的包，安全且收敛
-        for i in 1 2 3; do
-          echo "==> [make download] 第 $i/3 次尝试"
-          if make download -j"$(nproc)"; then
-            echo "全部软件包源码下载完成"
-            exit 0
+          # 严格模式复核：即使 make 返回 0，日志存在报错行也判定失败，杜绝假成功
+          if grep -qE "ERROR:" build.log; then
+            echo "ERROR: 编译日志中存在报错包，严格模式判定整体编译失败"
+            exit 1
           fi
-          echo "    警告: 第 $i 次下载存在失败项，退避重试..."
-          sleep 15
-        done
-        echo "错误: make download 3 次尝试后仍有失败项"
-        exit 1
 
-    # ---------- 18. 编译固件（严格模式 + 瞬时故障重试） ----------
-    - name: 编译固件
-      working-directory: ${{ env.SRC_DIR }}
-      shell: bash
-      run: |
-        set -o pipefail # 保证 make 经管道后失败码不丢失
-        # 未使用 -k/--keep-going，任一软件包编译报错 make 立即停止
-        #
-        # 重试 rationale（run 10 实证）:
-        #   git 协议源码包（ncurses / open-app-filter 等，镜像列表为空）只能经
-        #   git clone + repack 获取，repack 产物哈希与 Makefile 的
-        #   PKG_MIRROR_HASH 永不相等，download.pl 在构建期每次都要
-        #   删除本地文件并重新下载；该下载发生在包构建过程中，无重试保护，
-        #   GitHub 一次瞬时网络故障即令整体构建中断（run 10: ncurses [host]
-        #   构建期重下载 git clone 失败 Error 128，2.5 小时成果作废）。
-        #   make 为 stamp 增量构建：失败后重跑会跳过已完成包、仅重试失败包，
-        #   因此对瞬时网络故障重试安全收敛；真实编译错误则快速重复失败，
-        #   最多浪费一个失败包的构建时间。
-        for i in 1 2 3; do
-          echo "==> [编译固件] 第 $i/3 次尝试"
-          if make -j"$(nproc)" V=s 2>&1 | tee build.log; then
-            echo "编译成功完成"
-            exit 0
+      # ---------- 步骤13：编译失败时仅提取 ERROR 定位日志，避免日志过载 ----------
+      - name: 【失败处理】提取 ERROR 定位信息（缺失依赖/路径错误/分支异常/模块冲突）
+        if: failure()
+        run: |
+          LOG="lede/build.log"
+          {
+            echo "===== ERROR 定位汇总（仅关键错误，非全量日志）====="
+            grep -nE "ERROR:|No such file or directory|not found|dependency|conflict|FAILED|Error [0-9]+" \
+              "$LOG" 2>/dev/null | head -n 300 || echo "（未捕获到明确错误行，请检查上方步骤）"
+            echo ""
+            echo "===== 错误上下文（前后各 5 行）====="
+            grep -n -B 5 -A 5 "ERROR:" "$LOG" 2>/dev/null | head -n 400 || true
+          } > error.log
+          echo "已生成 error.log，大小：$(du -h error.log | cut -f1)"
+
+      # ---------- 步骤14：上传 ERROR 日志（不收集全量日志） ----------
+      - name: 【失败处理】上传 ERROR 失败日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ERROR_Build_Log
+          path: error.log
+          if-no-files-found: ignore
+
+      # ---------- 步骤15：产物自动校验（文件/格式/分区容量），不达标直接终止 ----------
+      - name: 【产物校验】校验镜像存在 / squashfs 格式 / 根分区 2G 扩容
+        run: bash scripts/04-verify-image.sh lede
+
+      # ---------- 步骤16：时间戳重命名，过滤多余产物，未生成目标镜像判定失败 ----------
+      - name: 【发布准备】时间戳命名 img.gz 并过滤多余产物
+        run: |
+          cd lede/bin/targets/x86/64
+          # 过滤多余产物：仅保留 squashfs-combined-efi 镜像压缩包
+          find . -maxdepth 1 -type f ! -name "*squashfs-combined-efi.img.gz" -delete
+          IMG=$(ls *squashfs-combined-efi.img.gz 2>/dev/null | head -n1)
+          if [ -z "$IMG" ]; then
+            echo "ERROR: 未生成目标镜像，判定编译失败"
+            exit 1
           fi
-          echo "    警告: 第 $i 次编译失败，15 秒后重试（增量构建，已完成包不重建）..."
-          [ "$i" -lt 3 ] && sleep 15
-        done
-        echo "错误: 编译 3 次尝试均失败"
-        exit 1
+          mv "$IMG" "${RELEASE_TIME}-${IMG}"
+          echo "发布文件：${RELEASE_TIME}-${IMG}"; ls -lh
 
-    # ---------- 19. 编译失败自动上传完整日志 ----------
-    - name: 上传编译失败日志
-      if: failure() # 仅当前面步骤失败时执行
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log # 日志工件名
-        path: ${{ env.SRC_DIR }}/build.log # 完整编译日志
-        retention-days: 7 # 保留 7 天
-        if-no-files-found: warn # 日志缺失时警告不失败
+      # ---------- 步骤17：生成内核版本 / 固件版本 / 纯净插件清单（不展示 kmod） ----------
+      - name: 【发布准备】生成 Release 说明
+        run: bash scripts/05-release-body.sh lede
 
-    # ---------- 20. 校验镜像（分区容量/格式/squashfs 完整性，不达标终止） ----------
-    - name: 校验镜像完整性与分区容量
-      run: bash scripts/verify_image.sh "$SRC_DIR/bin/targets/x86/64"
-      # 校验 rootfs 分区 >= 2GiB、镜像格式、squashfs 结构、gzip 完整性
-
-    # ---------- 21. 打包时间戳固件并清理多余镜像 ----------
-    - name: 打包时间戳固件
-      run: bash scripts/package_firmware.sh "$SRC_DIR/bin/targets/x86/64" "$OUTPUT_DIR"
-      # 产物命名 YYYYMMDD-HHMMSS-lede-x86_64-squashfs.img.gz
-      # img.gz 未生成则判定编译失败直接退出（不会走到 Release）
-      # 其余 bin 目录多余镜像（vdi/vmdk/efi 等）全部自动清理
-
-    # ---------- 22. 生成 Release 说明（commit/内核版本/插件清单） ----------
-    - name: 生成 Release 说明
-      run: bash scripts/gen_release_notes.sh "$SRC_DIR" > release_notes.md
-
-    # ---------- 23. 创建 Release 并上传固件压缩包 ----------
-    - name: 创建 Release 并上传固件
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ env.RELEASE_TAG }} # Release 标签（时间戳）
-        name: LEDE x86_64 ${{ env.RELEASE_TAG }} # Release 标题
-        body_path: release_notes.md # 发布说明内容
-        files: ${{ env.OUTPUT_DIR }}/*.img.gz # 上传固件压缩包
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 令牌写入权限
+      # ---------- 步骤18：编译成功自动创建 GitHub Release 并上传 img.gz ----------
+      - name: 【自动发布】上传 img.gz 至 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: LEDE_${{ env.RELEASE_TIME }}
+          name: LEDE-X86_64-${{ env.RELEASE_TIME }}
+          body_path: release_body.md
+          files: lede/bin/targets/x86/64/*.img.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
