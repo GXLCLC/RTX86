@@ -73,6 +73,12 @@ jobs:
       # ---------- 步骤7：拉取源码后立即执行自定义脚本，直接替换源码密码配置文件 ----------
       - name: 【源码定制】写入默认 IP 192.168.2.1 / 密码 12345678 / 主机名 / 时区
         run: bash scripts/01-custom-settings.sh lede
+     #------------步骤 8.5:打印当前源码内核版本------------
+      - name: 【调试】打印当前源码内核版本
+        run: |
+          cd lede
+          echo "KERNEL_PATCHVER = $(grep KERNEL_PATCHVER target/linux/x86/Makefile)"
+
 
       # ---------- 步骤8：第三方插件前置校验 + 稀疏检出 ----------
       - name: 【第三方插件】前置校验（连通性/分支/目录/依赖）并稀疏拉取
