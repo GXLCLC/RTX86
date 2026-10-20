@@ -38,12 +38,28 @@ sparse_pull() {
     # 目录完整性校验：目录不存在 return 1，交给外层处理，不再直接exit
     for d in "${dirs[@]}"; do
         if [ ! -e "$dest/$d" ]; then
-            echo "ERROR: 目录不存在或已更名 -> $repo/$d"
-            echo "修复建议：上游目录结构调整，尝试Fallback备用仓库"
+            echo "NOTICE: 目录不存在或已更名 -> $repo/$d"
             return 1
         fi
     done
     return 0
+}
+# 新增：临时拉取插件并复制追加，不清空目标目录
+pull_missing_append() {
+    local repo="$1" branch="$2" dest="$3" pkg="$4"
+    local tmp=".tmp_clone"
+    rm -rf "$tmp"
+    git clone --filter=blob:none --depth=1 --sparse -b "$branch" "$repo" "$tmp" 2>/dev/null
+    (cd "$tmp" && git sparse-checkout set --no-cone "$pkg")
+    if [ -d "$tmp/$pkg" ]; then
+        cp -r "$tmp/$pkg" "$dest/"
+        echo ">> ✅ 备选源补全：$pkg"
+    else
+        rm -rf "$tmp"
+        echo "ERROR: $pkg 在两个仓库都找不到！"
+        exit 1
+    fi
+    rm -rf "$tmp"
 }
 # ---------- 1. 全部第三方源前置校验 ----------
 precheck "$REPO_KENZOK8"  master
@@ -60,16 +76,31 @@ for pkg in "${WANT_PKGS[@]}"; do
         MISSING+=("$pkg")
     fi
 done
-# ---------- 3. Primary主仓拉取 + Fallback备选兜底【新增逻辑】 ----------
+# ===================== 只修改这一段，其余保持原样 =====================
 if [ ${#MISSING[@]} -gt 0 ]; then
-    echo ">> [Primary] 优先尝试从 kenzok8/openwrt-packages 拉取缺失插件"
-    if sparse_pull "$REPO_KENZOK8" master "${LEDE_DIR}/package/kenzok8-packages" "${MISSING[@]}"; then
-        echo ">> [Primary] 全部插件拉取成功，跳过Fallback"
-    else
-        echo ">> [Primary 失败！触发Fallback，切换 small-package 备用源]"
-        sparse_pull "$REPO_SMALL" main "${LEDE_DIR}/package/kenzok8-packages" "${MISSING[@]}"
+    TARGET="${LEDE_DIR}/package/kenzok8-packages"
+    mkdir -p "$TARGET"
+    # Step1：首选源批量拉取全部插件
+    echo ">> [Primary首选源] 批量拉取全部缺失插件"
+    sparse_pull "$REPO_KENZOK8" master "$TARGET" "${MISSING[@]}" || true
+
+    # Step2：自动筛选出主仓没有拉到的插件
+    MISSING_AFTER=()
+    for pkg in "${MISSING[@]}"; do
+        if [ ! -d "${TARGET}/$pkg" ]; then
+            MISSING_AFTER+=("$pkg")
+        fi
+    done
+
+    # Step3：只对缺失插件，去备选仓追加拉取，不覆盖已有文件
+    if [ ${#MISSING_AFTER[@]} -gt 0 ]; then
+        echo ">> [Fallback备选源] 补拉缺失插件：${MISSING_AFTER[*]}"
+        for pkg in "${MISSING_AFTER[@]}"; do
+            pull_missing_append "$REPO_SMALL" main "$TARGET" "$pkg"
+        done
     fi
 fi
+# ======================================================================
 # ---------- 4. small-package 依赖补充（浅克隆整仓 + 历史裁剪）----------
 echo ">> [依赖补充] 拉取 small-package（main 分支）"
 git clone --filter=blob:none --depth=1 -b main "$REPO_SMALL" "${LEDE_DIR}/package/small-package"
