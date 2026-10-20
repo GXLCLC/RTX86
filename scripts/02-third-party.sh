@@ -32,8 +32,7 @@ REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # L4 独立专�
 REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立专项：Bandix 后端(eBPF)
 # 需要的第三方通用插件清单（L2/L3 三级包源检索对象；独立专项仓不在此清单）
 WANT_PKGS=(
-    luci-app-ddnsto luci-app-easytier
-    luci-app-turboacc luci-app-oaf
+    luci-app-ddnsto luci-app-easytier luci-app-oaf luci-app-turboacc
 )
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
