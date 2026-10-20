@@ -1,4 +1,5 @@
 仓库结构
+'''
 lede-cloud-build/
 ├── .github/
 │   └── workflows/
@@ -12,3 +13,4 @@ lede-cloud-build/
 │   ├── 04-verify-image.sh          # 产物校验：文件 / 格式 / 根分区2G扩容
 │   └── 05-release-body.sh          # 生成Release说明：版本 + 纯净插件清单
 └── README.md
+'''
