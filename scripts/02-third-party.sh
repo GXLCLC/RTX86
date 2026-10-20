@@ -11,11 +11,14 @@ REPO_KENZOK8="https://github.com/kenzok8/openwrt-packages.git"  # kenzok8 插件
 REPO_SMALL="https://github.com/kenzok8/small-package.git"        # 依赖补充源 main
 REPO_TURBOACC="https://github.com/mufeng05/turboacc.git"         # TurboACC 加速
 REPO_OAF="https://github.com/destan19/OpenAppFilter.git"         # OAF 行为管理（含内核模块）
+REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # [新增] Bandix 前端
+REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # [新增] Bandix 后端(eBPF采集)
 # 需要的插件目录清单（可按需增删）
 WANT_PKGS=(
     luci-app-smartdns luci-app-ddnsto luci-app-adguardhome luci-app-easytier
-    luci-app-wechatpush luci-app-nlbwmon luci-app-mwan3 luci-app-wol
+    luci-app-wechatpush luci-app-mwan3 luci-app-wol
     luci-app-upnp luci-app-ttyd luci-app-autoreboot
+    # [已删除] luci-app-nlbwmon —— 带宽监控已由 Bandix 替代
 )
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
@@ -66,6 +69,8 @@ precheck "$REPO_KENZOK8"  master
 precheck "$REPO_SMALL"    main
 precheck "$REPO_TURBOACC" main
 precheck "$REPO_OAF"      master
+precheck "$REPO_BANDIX"   main
+precheck "$REPO_BANDIX_BACKEND" main
 # ---------- 2. 优先官方：官方已有则跳过，缺失才标记第三方拉取 ----------
 MISSING=()
 for pkg in "${WANT_PKGS[@]}"; do
@@ -80,10 +85,9 @@ done
 if [ ${#MISSING[@]} -gt 0 ]; then
     TARGET="${LEDE_DIR}/package/kenzok8-packages"
     mkdir -p "$TARGET"
-    # Step1：首选源批量拉取全部插件
+    # Step1：首选源批量拉取全部缺失插件
     echo ">> [Primary首选源] 批量拉取全部缺失插件"
     sparse_pull "$REPO_KENZOK8" master "$TARGET" "${MISSING[@]}" || true
-
     # Step2：自动筛选出主仓没有拉到的插件
     MISSING_AFTER=()
     for pkg in "${MISSING[@]}"; do
@@ -91,7 +95,6 @@ if [ ${#MISSING[@]} -gt 0 ]; then
             MISSING_AFTER+=("$pkg")
         fi
     done
-
     # Step3：只对缺失插件，去备选仓追加拉取，不覆盖已有文件
     if [ ${#MISSING_AFTER[@]} -gt 0 ]; then
         echo ">> [Fallback备选源] 补拉缺失插件：${MISSING_AFTER[*]}"
@@ -108,8 +111,11 @@ git clone --filter=blob:none --depth=1 -b main "$REPO_SMALL" "${LEDE_DIR}/packag
 sparse_pull "$REPO_TURBOACC" main "${LEDE_DIR}/package/turboacc" luci-app-turboacc
 # ---------- 6. OAF 行为管理（面板 + 内核模块源码，随官方内核本地编译）----------
 sparse_pull "$REPO_OAF" master "${LEDE_DIR}/package/openappfilter" luci-app-oaf open-app-filter
-# ---------- 7. 依赖可用性最终校验 ----------
-for pkg in "${WANT_PKGS[@]}" luci-app-turboacc luci-app-oaf; do
+# ---------- 7. [新增] Bandix 流量监控（前端 + 后端，独立仓库，不走 kenzok8 兜底）----------
+sparse_pull "$REPO_BANDIX" main "${LEDE_DIR}/package/bandix" luci-app-bandix
+sparse_pull "$REPO_BANDIX_BACKEND" main "${LEDE_DIR}/package/bandix-backend" openwrt-bandix
+# ---------- 8. 依赖可用性最终校验 ----------
+for pkg in "${WANT_PKGS[@]}" luci-app-turboacc luci-app-oaf luci-app-bandix openwrt-bandix; do
     if ! find "${LEDE_DIR}/package" -maxdepth 3 -type d -name "$pkg" | grep -q .; then
         echo "ERROR: 插件 $pkg 拉取后仍未找到，依赖不可用"
         echo "修复建议：检查该插件在上游仓库中的实际目录名"
