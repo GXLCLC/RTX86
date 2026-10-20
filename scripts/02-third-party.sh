@@ -27,13 +27,14 @@ cd - > /dev/null
 # ---------- 第三方源定义 ----------
 REPO_KENZOK8="https://github.com/kenzok8/openwrt-packages.git"  # L2 首选第三方包源 master
 REPO_SMALL="https://github.com/kenzok8/small-package.git"        # L3 备选依赖源 main
-# 已移除独立仓：TurboACC、OAF，改为走L2/L3自动拉取
 REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # L4 独立专项：Bandix 前端
 REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立专项：Bandix 后端(eBPF)
-# 需要的第三方通用插件清单（L2/L3 三级包源检索对象；独立专项仓不在此清单）
+
+# 【关键改动】移除turboacc，它不在根目录，不走L2/L3循环
 WANT_PKGS=(
-    luci-app-ddnsto luci-app-easytier luci-app-oaf luci-app-turboacc
+    luci-app-ddnsto luci-app-easytier luci-app-oaf
 )
+
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
     local repo="$1" branch="$2"
@@ -44,28 +45,30 @@ precheck() {
         exit 1
     fi
 }
+
 # ---------- 稀疏拉取函数：部分克隆 + 稀疏检出 + 目录完整性校验 ----------
-# 改动：把内部 exit 改为 return 1，交给外层 fallback 判断，其他内容一字不改
 sparse_pull() {
     local repo="$1" branch="$2" dest="$3"; shift 3
     local dirs=("$@")
     echo ">> [稀疏拉取] $repo -> $dest（仅检出: ${dirs[*]}）"
+    rm -rf "$dest"
     git clone --filter=blob:none --depth=1 --sparse -b "$branch" "$repo" "$dest" 2>/dev/null
     ( cd "$dest" && git sparse-checkout set --no-cone "${dirs[@]}" )
-    # 目录完整性校验：目录不存在 return 1，交给外层处理，不再直接exit 1
+    # 目录完整性校验
     for d in "${dirs[@]}"; do
         if [ ! -e "$dest/$d" ]; then
-            echo "NOTICE: 目录不存在或已更名 -> $repo/$d"
+            echo "NOTICE: 目录 $d 检出失败"
             return 1
         fi
     done
     return 0
 }
-# 新增：临时拉取插件并复制追加，不清空目标目录
+
+# ---------- 单个包兜底补漏函数（L3逐个调用） ----------
 pull_missing_append() {
     local repo="$1" branch="$2" dest="$3" pkg="$4"
-    local tmp=".tmp_clone"
-    rm -rf "$tmp"
+    local tmp
+    tmp=$(mktemp -d)
     git clone --filter=blob:none --depth=1 --sparse -b "$branch" "$repo" "$tmp" 2>/dev/null
     (cd "$tmp" && git sparse-checkout set --no-cone "$pkg")
     if [ -d "$tmp/$pkg" ]; then
@@ -78,11 +81,13 @@ pull_missing_append() {
     fi
     rm -rf "$tmp"
 }
+
 # ---------- 1. 全部第三方源前置校验 ----------
 precheck "$REPO_KENZOK8"  master
 precheck "$REPO_SMALL"    main
 precheck "$REPO_BANDIX"   main
 precheck "$REPO_BANDIX_BACKEND" main
+
 # ---------- 【L1 结果扫描】：feed安装完成后，筛查缺失插件 ----------
 MISSING=()
 echo -e "\n>> [L1扫描] 检查Lean Feed安装结果"
@@ -94,6 +99,7 @@ for pkg in "${WANT_PKGS[@]}"; do
         MISSING+=("$pkg")
     fi
 done
+
 # ---------- 【L2 批次拉取】kenzok8/openwrt-packages，批量拉取所有L1缺失项 ----------
 if [ ${#MISSING[@]} -gt 0 ]; then
     TARGET="${LEDE_DIR}/package/kenzok8-packages"
@@ -116,16 +122,38 @@ if [ ${#MISSING[@]} -gt 0 ]; then
         done
     fi
 fi
-# ---------- 【L4 独立专项仓库固定拉取，不受上面清单控制】----------
-echo -e "\n>> [L4] 拉取独立专项仓库 Bandix"
+
+# ======================【新增独立L4：单独拉取多层目录turboacc】======================
+echo -e "\n>> [L4] 单独稀疏检出 small-package 内 turboacc（多层子目录）"
+TMP_TURBO="${LEDE_DIR}/.tmp_turboacc"
+rm -rf "$TMP_TURBO"
+git clone --filter=blob:none --depth=1 --sparse -b main "$REPO_SMALL" "$TMP_TURBO"
+cd "$TMP_TURBO"
+# 开启非锥形模式，匹配多层路径
+git sparse-checkout set --no-cone other/lean/luci-app-turboacc
+cd - >/dev/null
+
+# 复制到package目录
+if [ -d "${TMP_TURBO}/other/lean/luci-app-turboacc" ]; then
+    cp -r "${TMP_TURBO}/other/lean/luci-app-turboacc" "${LEDE_DIR}/package/"
+    echo ">> ✅ luci-app-turboacc 复制完成"
+else
+    echo "❌ ERROR: turboacc 多层目录检出失败"
+    exit 1
+fi
+rm -rf "$TMP_TURBO"
+
+# ---------- 【L5 独立专项仓库固定拉取，不受上面清单控制】----------
+echo -e "\n>> [L5] 拉取独立专项仓库 Bandix"
 sparse_pull "$REPO_BANDIX" main "${LEDE_DIR}/package/bandix" luci-app-bandix
 sparse_pull "$REPO_BANDIX_BACKEND" main "${LEDE_DIR}/package/bandix-backend" openwrt-bandix
+
 # ---------- 【最终全局校验】----------
-CHECK_LIST=("${WANT_PKGS[@]}" luci-app-bandix openwrt-bandix)
+CHECK_LIST=("${WANT_PKGS[@]}" luci-app-turboacc luci-app-bandix openwrt-bandix)
 echo -e "\n>> [最终校验] 检查全部插件是否就绪"
 for pkg in "${CHECK_LIST[@]}"; do
     if ! find "${LEDE_DIR}/package" -maxdepth 3 -type d -name "$pkg" | grep -q .; then
-        echo "ERROR: 插件 $pkg 经过L1/L2/L3/L4多级拉取后仍未找到，依赖不可用"
+        echo "ERROR: 插件 $pkg 经过L1/L2/L3/L4/L5多级拉取后仍未找到，依赖不可用"
         echo "修复建议：检查该插件在上游仓库中的实际目录名"
         exit 1
     fi
