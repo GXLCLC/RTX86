@@ -39,8 +39,7 @@ REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立�
 WANT_PKGS=(
     luci-app-smartdns luci-app-ddnsto luci-app-adguardhome luci-app-easytier
     luci-app-wechatpush luci-app-mwan3 luci-app-wol
-    luci-app-upnp luci-app-ttyd luci-app-autoreboot
-    # [已删除] luci-app-nlbwmon —— 带宽监控已由 Bandix 替代
+    luci-app-upnp luci-app-ttyd luci-app-autoreboot luci-app-nlbwmon
 )
 
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
