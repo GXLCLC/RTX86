@@ -1,13 +1,12 @@
 #!/bin/bash
 # =====================================================================
 # 04-verify-image.sh —— 编译产物自动校验
-# 校验：1) 目标镜像存在  2) squashfs 格式  3) 根分区总大小（默认+2G 扩容）
-# 任一项不达标直接终止流程
+# 校验：1) 目标镜像存在  2) squashfs 格式 + 压缩包完整性
+# 方案二：不再校验镜像内overlay分区尺寸，改为校验限制脚本已内置
 # =====================================================================
 set -e
 LEDE_DIR="${1:?用法: 04-verify-image.sh <lede源码目录>}"
 IMG_DIR="${LEDE_DIR}/bin/targets/x86/64"
-MIN_ROOTFS_MB=2048    # 扩容要求：根分区不低于 2G
 
 echo "===== 1/3 校验目标镜像是否存在 ====="
 IMG_GZ=$(find "$IMG_DIR" -maxdepth 1 -name "*squashfs-combined-efi.img.gz" | head -n1)
@@ -20,7 +19,6 @@ echo "OK: $IMG_GZ"
 
 echo "===== 2/3 校验 squashfs 格式与压缩包完整性 ====="
 echo "$IMG_GZ" | grep -q "squashfs" || { echo "ERROR: 镜像非 squashfs 格式"; exit 1; }
-# gzip 返回码：0=正常 1=损坏 2=尾部多余数据（OpenWrt combined镜像正常现象）
 set +e
 gzip -t "$IMG_GZ"
 GZ_RET=$?
@@ -33,17 +31,24 @@ elif [ $GZ_RET -eq 2 ]; then
 fi
 echo "OK: squashfs 格式且压缩包主体完整"
 
-echo "===== 3/3 校验根分区总大小（不小于 ${MIN_ROOTFS_MB}MB，含 2G 扩容）====="
+echo "===== 3/3 校验：overlay 2G限制脚本已内置镜像 ====="
 gzip -dc "$IMG_GZ" > /tmp/check.img
-PART2=$(fdisk -l /tmp/check.img 2>/dev/null | awk '/check.img2/ {print $2, $3}')
-START_SEC=$(echo "$PART2" | awk '{print $1}')
-END_SEC=$(echo "$PART2" | awk '{print $2}')
-ROOTFS_MB=$(( (END_SEC - START_SEC + 1) * 512 / 1048576 ))
-echo "根分区（rootfs）实际大小：${ROOTFS_MB}MB"
-if [ "$ROOTFS_MB" -lt "$MIN_ROOTFS_MB" ]; then
-    echo "ERROR: 根分区 ${ROOTFS_MB}MB 未达到 ${MIN_ROOTFS_MB}MB（2G 扩容）要求，判定失败"
-    echo "修复建议：检查 config 中 CONFIG_TARGET_ROOTFS_PARTSIZE 是否设置扩容"
+LOOP_DEV=$(losetup -f)
+losetup "$LOOP_DEV" /tmp/check.img
+SQUASHFS_PART="${LOOP_DEV}p2"
+mkdir -p /tmp/mnt_squash
+mount -t squashfs "$SQUASHFS_PART" /tmp/mnt_squash
+
+if [ -f "/tmp/mnt_squash/overlay-limit.sh" ] && [ -f "/tmp/mnt_squash/etc/init.d/overlay-limit" ]; then
+    echo "OK: overlay上限限制脚本已经打包进固件"
+else
+    echo "ERROR：镜像缺失 overlay-limit 限制脚本！注入流程异常"
+    losetup -d "$LOOP_DEV"
+    rm -rf /tmp/mnt_squash /tmp/check.img
     exit 1
 fi
-rm -f /tmp/check.img
+
+umount /tmp/mnt_squash
+losetup -d "$LOOP_DEV"
+rm -rf /tmp/mnt_squash
 echo "===== 校验全部通过 ====="
