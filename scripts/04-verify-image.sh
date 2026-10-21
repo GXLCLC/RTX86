@@ -20,8 +20,18 @@ echo "OK: $IMG_GZ"
 
 echo "===== 2/3 校验 squashfs 格式与压缩包完整性 ====="
 echo "$IMG_GZ" | grep -q "squashfs" || { echo "ERROR: 镜像非 squashfs 格式"; exit 1; }
-gzip -t "$IMG_GZ" || { echo "ERROR: img.gz 压缩包损坏"; exit 1; }
-echo "OK: squashfs 格式且压缩包完整"
+# gzip 返回码：0=正常 1=损坏 2=尾部多余数据（OpenWrt combined镜像正常现象）
+set +e
+gzip -t "$IMG_GZ"
+GZ_RET=$?
+set -e
+if [ $GZ_RET -eq 1 ]; then
+    echo "ERROR: img.gz 压缩包损坏！"
+    exit 1
+elif [ $GZ_RET -eq 2 ]; then
+    echo "NOTICE: 检测到sysupgrade尾部附加数据(trailing garbage)，属于OpenWrt combined镜像正常情况"
+fi
+echo "OK: squashfs 格式且压缩包主体完整"
 
 echo "===== 3/3 校验根分区总大小（不小于 ${MIN_ROOTFS_MB}MB，含 2G 扩容）====="
 gzip -dc "$IMG_GZ" > /tmp/check.img
