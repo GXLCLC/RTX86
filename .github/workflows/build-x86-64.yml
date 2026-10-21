@@ -4,32 +4,26 @@
 # 触发：仅手动 workflow_dispatch（关闭所有自动触发）
 # ============================================================
 name: LEDE_X86_64_CloudBuild
-
 # ---------- 构建规则：仅手动触发，无 push / pr / schedule 等自动触发 ----------
 on:
   workflow_dispatch:
-
 # 自动创建 Release 需要仓库写入权限
 permissions:
   contents: write
-
 jobs:
   build:
     # ---------- 固定运行环境：Ubuntu 24.04 LTS ----------
     runs-on: ubuntu-24.04
-
     steps:
       # ---------- 步骤1：检出本仓库，获取脚本与编译配置 ----------
       - name: 【源码准备】检出本仓库（脚本 + 配置）
         uses: actions/checkout@v4
-
       # ---------- 步骤2：固件时区固定 Asia/Shanghai，生成发布时间戳 ----------
       - name: 【环境初始化】固定时区 Asia/Shanghai 并生成固件时间戳
         run: |
           sudo timedatectl set-timezone "Asia/Shanghai"
           echo "RELEASE_TIME=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
           echo "构建时间：$(date '+%Y-%m-%d %H:%M:%S')"
-
       # ---------- 步骤3：释放磁盘空间，保证 X86_64 全量编译空间充足 ----------
       - name: 【环境初始化】释放磁盘空间
         run: |
@@ -37,7 +31,6 @@ jobs:
                        /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules || true
           sudo docker image prune -af >/dev/null 2>&1 || true
           df -h /
-
       # ---------- 步骤4：安装编译依赖 ----------
       - name: 【环境初始化】安装编译依赖
         run: |
@@ -50,7 +43,6 @@ jobs:
             p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
             python3-setuptools qemu-utils re2c rsync scons squashfs-tools subversion swig \
             texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
-
       # ---------- 步骤5：恢复 DL 缓存，加速二次编译 ----------
       - name: 【缓存】恢复 DL 缓存加速编译
         uses: actions/cache@v4
@@ -58,7 +50,6 @@ jobs:
           path: lede/dl
           key: lede-dl-x86_64-${{ hashFiles('config/X86_64.config') }}
           restore-keys: lede-dl-x86_64-
-
       # ---------- 步骤6：前置校验仓库与分支，异常直接终止并输出修复建议 ----------
       - name: 【源码准备】前置校验并拉取 lean LEDE master 分支
         run: |
@@ -75,7 +66,6 @@ jobs:
          cd lede
           sed -i 's/KERNEL_PATCHVER:=6.18/KERNEL_PATCHVER:=6.12/' target/linux/x86/Makefile
           sed -i 's/KERNEL_TESTING_PATCHVER:=6.12/KERNEL_TESTING_PATCHVER:=6.18/' target/linux/x86/Makefile
-
       # ---------- 步骤7：拉取源码后立即执行自定义脚本，直接替换源码密码配置文件 ----------
       - name: 【源码定制】写入默认 IP 192.168.2.1 / 密码 12345678 / 主机名 / 时区
         run: bash scripts/01-custom-settings.sh lede
@@ -84,23 +74,21 @@ jobs:
         run: |
           cd lede
           echo "KERNEL_PATCHVER = $(grep KERNEL_PATCHVER target/linux/x86/Makefile)"
-
-
       # ---------- 步骤8：第三方插件前置校验 + 稀疏检出 ----------
       - name: 【第三方插件】前置校验（连通性/分支/目录/依赖）并稀疏拉取
         run: bash scripts/02-third-party.sh lede
-
       # ---------- 步骤9：依赖冲突处理（保留官方内核，仅移除冲突第三方模块） ----------
       - name: 【冲突处理】保留官方内核，移除 SFE/Shortcut-FE 等冲突模块
         run: bash scripts/03-conflict-fix.sh lede
-
+      # ==========【这里是新增步骤，仅此一处新增！】==========
+      - name: 【源码注入】注入overlay最大2G限制开机脚本
+        run: bash scripts/03b-inject-overlay-limit.sh lede
       # ---------- 步骤10：写入编译配置并自动补全全套依赖 ----------
       - name: 【编译配置】写入 config/X86_64.config 并补全依赖
         run: |
           cp config/X86_64.config lede/.config
           cd lede && make defconfig
           echo "已启用软件包数量：$(grep -c '^CONFIG_PACKAGE.*=y' .config)"
-
       # ---------- 步骤11：预下载软件包，剔除损坏文件 ----------
       - name: 【下载】预下载全部软件包
         run: |
@@ -108,7 +96,6 @@ jobs:
           make download -j$(nproc)
           # 严格模式：删除小于 1KB 的可疑残缺文件，避免编译中途报错
           find dl -size -1024c -type f -exec rm -f {} \;
-
       # ---------- 步骤12：严格模式编译，任意包报错立即终止整体编译 ----------
       - name: 【编译】严格模式编译 X86_64 squashfs 固件
         shell: bash
@@ -124,7 +111,6 @@ jobs:
             echo "ERROR: 编译日志中存在报错包，严格模式判定整体编译失败"
             exit 1
           fi
-
       # ---------- 步骤13：编译失败时仅提取 ERROR 定位日志，避免日志过载 ----------
       - name: 【失败处理】提取 ERROR 定位信息（缺失依赖/路径错误/分支异常/模块冲突）
         if: failure()
@@ -139,7 +125,6 @@ jobs:
             grep -n -B 5 -A 5 "ERROR:" "$LOG" 2>/dev/null | head -n 400 || true
           } > error.log
           echo "已生成 error.log，大小：$(du -h error.log | cut -f1)"
-
       # ---------- 步骤14：上传 ERROR 日志（不收集全量日志） ----------
       - name: 【失败处理】上传 ERROR 失败日志
         if: failure()
@@ -148,11 +133,9 @@ jobs:
           name: ERROR_Build_Log
           path: error.log
           if-no-files-found: ignore
-
-      # ---------- 步骤15：产物自动校验（文件/格式/分区容量），不达标直接终止 ----------
-      - name: 【产物校验】校验镜像存在 / squashfs 格式 / 根分区 2G 扩容
+      # ---------- 步骤15：产物自动校验（这里你要替换新版04-verify-image.sh） ----------
+      - name: 【产物校验】校验镜像存在 / squashfs 格式 / 脚本内置校验
         run: bash scripts/04-verify-image.sh lede
-
       # ---------- 步骤16：时间戳重命名，过滤多余产物，未生成目标镜像判定失败 ----------
       - name: 【发布准备】时间戳命名 img.gz 并过滤多余产物
         run: |
@@ -166,11 +149,9 @@ jobs:
           fi
           mv "$IMG" "${RELEASE_TIME}-${IMG}"
           echo "发布文件：${RELEASE_TIME}-${IMG}"; ls -lh
-
       # ---------- 步骤17：生成内核版本 / 固件版本 / 纯净插件清单（不展示 kmod） ----------
       - name: 【发布准备】生成 Release 说明
         run: bash scripts/05-release-body.sh lede
-
       # ---------- 步骤18：编译成功自动创建 GitHub Release 并上传 img.gz ----------
       - name: 【自动发布】上传 img.gz 至 GitHub Releases
         uses: softprops/action-gh-release@v2
