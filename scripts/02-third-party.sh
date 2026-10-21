@@ -30,9 +30,10 @@ REPO_SMALL="https://github.com/kenzok8/small-package.git"        # L3 备选依�
 REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # L4 独立专项：Bandix 前端
 REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立专项：Bandix 后端(eBPF)
 
-# 【关键改动】移除turboacc，它不在根目录，不走L2/L3循环
+# 只拉取 kenzok8 仓库插件，lean仓库没有的从这里拉取，填入包名，是否需要 luci即可具体分析，可以去 kenzok 软件仓库查看
+因为 turboacc 不是在根目录，所以不添加，新增独立 L4 拉取
 WANT_PKGS=(
-    luci-app-ddnsto luci-app-easytier luci-app-oaf
+    luci-app-ddnsto ddnsto luci-app-easytier luci-app-oaf oaf 
 )
 
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
