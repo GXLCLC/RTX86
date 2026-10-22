@@ -83,6 +83,9 @@ jobs:
       # ==========【这里是新增步骤，仅此一处新增！】==========
       - name: 【源码注入】注入overlay最大2G限制开机脚本
         run: bash scripts/03b-inject-overlay-limit.sh lede
+      # ---------- 步骤9.5：插件默认配置（mwan3清空 + smartdns禁用） ----------
+      - name: 【插件配置】预置mwan3空白 / smartdns默认禁用
+        run: bash scripts/06-preconfig.sh lede
       # ---------- 步骤10：写入编译配置并自动补全全套依赖 ----------
       - name: 【编译配置】写入 config/X86_64.config 并补全依赖
         run: |
