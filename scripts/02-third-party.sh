@@ -145,11 +145,11 @@ TMP_AGH="${LEDE_DIR}/.tmp_agh"
 rm -rf "$TMP_AGH"
 git clone --filter=blob:none --depth=1 --sparse -b master "$REPO_KENZOK8" "$TMP_AGH"
 cd "$TMP_AGH"
-git sparse-checkout set --no-cone net/adguardhome luci-app-adguardhome
+git sparse-checkout set --no-cone adguardhome luci-app-adguardhome
 cd - >/dev/null
 
-if [ -d "${TMP_AGH}/net/adguardhome" ] && [ -d "${TMP_AGH}/luci-app-adguardhome" ]; then
-cp -r "${TMP_AGH}/net/adguardhome" "${LEDE_DIR}/package/"
+if [ -d "${TMP_AGH}/adguardhome" ] && [ -d "${TMP_AGH}/luci-app-adguardhome" ]; then
+cp -r "${TMP_AGH}/adguardhome" "${LEDE_DIR}/package/"
 cp -r "${TMP_AGH}/luci-app-adguardhome" "${LEDE_DIR}/package/"
 echo ">> ✅ adguardhome + luci-app-adguardhome 已放入本地package，优先使用kenzok8版本"
 else
