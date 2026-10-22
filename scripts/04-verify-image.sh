@@ -3,6 +3,7 @@
 # 04-verify-image.sh —— 编译产物自动校验
 # 校验：1) 目标镜像存在  2) squashfs 格式 + 压缩包完整性
 # 方案二：不再校验镜像内overlay分区尺寸，改为校验限制脚本已内置
+# 附加：4) 预置配置双通道文件(zz-preconfig-fix/99-preconfig-init)已打包
 # =====================================================================
 set -e
 LEDE_DIR="${1:?用法: 04-verify-image.sh <lede源码目录>}"
@@ -89,6 +90,17 @@ if [ -f "$MNT_DIR/overlay-limit.sh" ] && [ -f "$MNT_DIR/etc/init.d/overlay-limit
 else
   echo "ERROR：镜像缺失 overlay-limit 限制脚本！注入流程异常"
   echo "修复建议：检查 scripts/03b-inject-overlay-limit.sh 是否正确写入 lede/files/ 目录"
+  exit 1
+fi
+
+# 4/4 校验：预置配置双通道文件已打包进固件（防止 files/ 注入静默丢失）
+if [ -f "$MNT_DIR/etc/init.d/zz-preconfig-fix" ] || [ -f "$MNT_DIR/etc/uci-defaults/99-preconfig-init" ]; then
+  echo "OK: 预置配置通道文件已打包进固件"
+  [ -f "$MNT_DIR/etc/init.d/zz-preconfig-fix" ] && echo "  - zz-preconfig-fix(init.d) 在镜像中"
+  [ -f "$MNT_DIR/etc/uci-defaults/99-preconfig-init" ] && echo "  - 99-preconfig-init(uci-defaults) 在镜像中"
+else
+  echo "ERROR：镜像缺失预置配置文件（zz-preconfig-fix / 99-preconfig-init）！"
+  echo "修复建议：检查 scripts/06-preconfig.sh 是否正确写入 lede/files/ 目录"
   exit 1
 fi
 
