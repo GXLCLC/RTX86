@@ -32,7 +32,7 @@ REPO_BANDIX="https://github.com/timsaya/luci-app-bandix.git"     # L4 独立专�
 REPO_BANDIX_BACKEND="https://github.com/timsaya/openwrt-bandix.git" # L4 独立专项：Bandix 后端(eBPF)
 # 只拉取 kenzok8 仓库插件，lean仓库没有的从这里填入包名是否需要luci对应的depends具体分析，可以去kenzok软件仓库查看因为turboacc不是在根目录，所以不添加同时新增独立L4拉取
 WANT_PKGS=(
-luci-app-ddnsto ddnsto luci-app-easytier luci-app-oaf oaf open-app-filter easytier
+luci-app-ddnsto ddnsto luci-app-easytier luci-app-oaf oaf open-app-filter easytier luci-app-argon-config luci-theme-argon
 )
 # ---------- 前置校验函数：仓库连通性 + 分支存在性 ----------
 precheck() {
