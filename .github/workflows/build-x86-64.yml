@@ -107,7 +107,10 @@ jobs:
           cd lede
           make download -j$(nproc)
           # 严格模式：删除小于 1KB 的可疑残缺文件，避免编译中途报错
-          find dl -size -1024c -type f -exec rm -f {} \;
+          # 必须排除 dl/go-mod-cache：Go 模块缓存(GO_MOD_CACHE_DIR)就在该目录，
+          # 其中 .info/.mod/list 等元数据天然小于 1KB，误删会导致 go install
+          # 模块解析失败（AdGuardHome 编译事故根因）
+          find dl -path "*/go-mod-cache" -prune -o -type f -size -1024c -exec rm -f {} +
       # ---------- 步骤12：严格模式编译，任意包报错立即终止整体编译 ----------
       - name: 【编译】严格模式编译 X86_64 squashfs 固件
         shell: bash
@@ -123,8 +126,8 @@ jobs:
             echo "ERROR: 编译日志中存在报错包，严格模式判定整体编译失败"
             exit 1
           fi
-      # ---------- 步骤13：编译失败时仅提取 ERROR 定位日志，避免日志过载 ----------
-      - name: 【失败处理】提取 ERROR 定位信息（缺失依赖/路径错误/分支异常/模块冲突）
+      # ---------- 步骤13：编译失败时提取定位日志，避免日志过载 ----------
+      - name: 【失败处理】提取 ERROR / Go 模块错误定位信息
         if: failure()
         run: |
           LOG="lede/build.log"
@@ -133,17 +136,26 @@ jobs:
             grep -nE "ERROR:|No such file or directory|not found|dependency|conflict|FAILED|Error [0-9]+" \
               "$LOG" 2>/dev/null | head -n 300 || echo "（未捕获到明确错误行，请检查上方步骤）"
             echo ""
+            echo "===== Go 工具链错误（模块下载/校验失败，普通 ERROR 模式抓不到）====="
+            grep -nE "^go: |no required module|missing go\.sum|checksum mismatch|verifying module|module lookup|dial tcp|TLS handshake|context deadline" \
+              "$LOG" 2>/dev/null | head -n 200 || echo "（未捕获 Go 模块错误）"
+            echo ""
             echo "===== 错误上下文（前后各 5 行）====="
-            grep -n -B 5 -A 5 "ERROR:" "$LOG" 2>/dev/null | head -n 400 || true
+            grep -n -B 5 -A 5 -E "ERROR:|^go: " "$LOG" 2>/dev/null | head -n 400 || true
           } > error.log
           echo "已生成 error.log，大小：$(du -h error.log | cut -f1)"
-      # ---------- 步骤14：上传 ERROR 日志（不收集全量日志） ----------
-      - name: 【失败处理】上传 ERROR 失败日志
+      # ---------- 步骤14：上传失败日志（error.log 摘要 + build.log 尾部） ----------
+      - name: 【失败处理】提取 build.log 尾部 2 万行
+        if: failure()
+        run: tail -n 20000 lede/build.log > build_tail.log 2>/dev/null || true
+      - name: 【失败处理】上传失败日志产物
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ERROR_Build_Log
-          path: error.log
+          path: |
+            error.log
+            build_tail.log
           if-no-files-found: ignore
       # ---------- 步骤15：产物自动校验（这里你要替换新版04-verify-image.sh） ----------
       - name: 【产物校验】校验镜像存在 / squashfs 格式 / 脚本内置校验
