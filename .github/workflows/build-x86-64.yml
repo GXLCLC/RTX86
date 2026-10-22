@@ -43,14 +43,7 @@ jobs:
             p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
             python3-setuptools qemu-utils re2c rsync scons squashfs-tools subversion swig \
             texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
-      # ---------- 步骤5：恢复 DL 缓存，加速二次编译 ----------
-      - name: 【缓存】恢复 DL 缓存加速编译
-        uses: actions/cache@v4
-        with:
-          path: lede/dl
-          key: lede-dl-x86_64-${{ hashFiles('config/X86_64.config') }}
-          restore-keys: lede-dl-x86_64-
-      # ---------- 步骤6：前置校验仓库与分支，异常直接终止并输出修复建议 ----------
+      # ---------- 步骤5：前置校验仓库与分支，异常直接终止并输出修复建议 ----------
       - name: 【源码准备】前置校验并拉取 lean LEDE master 分支
         run: |
           if ! git ls-remote --heads https://github.com/coolsnowwolf/lede.git master | grep -q master; then
@@ -58,8 +51,24 @@ jobs:
             echo "修复建议：检查网络连通性 / 仓库地址 / 分支名是否被上游调整"
             exit 1
           fi
+          # 防御：lede 目录已存在说明步骤顺序被破坏（如缓存恢复先于 clone 执行），
+          # 此时 clone 会因目标目录非空 fatal，这里给出明确指引而非 cryptic 报错
+          if [ -d lede ]; then
+            echo "ERROR: lede 目录已存在且非空，clone 无法继续"
+            echo "修复建议：DL 缓存恢复步骤必须放在本 clone 步骤之后执行"
+            exit 1
+          fi
           # 浅克隆拉取 master 分支（--depth=1 裁剪提交历史，减少冗余下载）
           git clone --depth=1 -b master https://github.com/coolsnowwolf/lede.git lede
+      # ---------- 步骤5.5：恢复 DL 缓存，加速二次编译 ----------
+      # 注意：必须放在 clone 之后！缓存恢复会创建 lede/ 目录，
+      # 若先于 clone 执行，git clone 会因目标目录已存在且非空而 fatal 失败
+      - name: 【缓存】恢复 DL 缓存加速编译
+        uses: actions/cache@v4
+        with:
+          path: lede/dl
+          key: lede-dl-x86_64-${{ hashFiles('config/X86_64.config') }}
+          restore-keys: lede-dl-x86_64-
       #步骤 6.5
       - name: 【源码修改】强制切换x86内核为6.12
         run: |
