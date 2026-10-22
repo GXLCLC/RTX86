@@ -5,7 +5,9 @@
 # 方式：--filter=blob:none + sparse-checkout 按需检出，--depth=1 裁剪历史
 # 优先级顺序：coolsnowwolf feeds → kenzok8/openwrt-packages → small-package → 独立仓库
 # Feed清单：packages + luci(openwrt-25.12) + routing，已移除无用telephony
-# 新增L6：单独拉取kenzok8的AdGuardHome放入package本地目录，覆盖Lean feed原版，不修改全局feed优先级
+# 新增L6：用kenzok8版luci-app-adguardhome(重定向4模式+中文界面)替换Lean feed版；
+#        采用替换feed源目录方式(package/根目录放同名包会被feed符号链接override，无效)，
+#        不修改全局feed优先级；adguardhome二进制本体两仓库同版本同hash，无需覆盖
 # =====================================================================
 set -e
 LEDE_DIR="${1:?用法: 02-third-party.sh <lede源码目录>}"
@@ -139,28 +141,38 @@ echo -e "\n>> [L5] 拉取独立专项仓库 Bandix"
 sparse_pull "$REPO_BANDIX" main "${LEDE_DIR}/package/bandix" luci-app-bandix
 sparse_pull "$REPO_BANDIX_BACKEND" main "${LEDE_DIR}/package/bandix-backend" openwrt-bandix
 
-# ======================【L6：单独拉取kenzok8的AdGuardHome，本地覆盖Lean feed版本】======================
-echo -e "\n>> [L6] 单独稀疏检出 kenzok8 openwrt-packages 内 AdGuardHome"
+# ======================【L6：用 kenzok8 版 luci-app-adguardhome 替换 Lean feed 版】======================
+# 背景：Lean feed 的 luci-app-adguardhome 是上游基础版，无"重定向模式(4种)"功能；
+#       kenzok8 版基于 rufengsuixing 重构，自带中文界面 + 5553 重定向 4 模式 + 核心自动更新等。
+# 注意：adguardhome 二进制本体两仓库同版本同 hash，无需覆盖（Lean 官方版即可）；
+#       也不能把 luci-app-adguardhome 复制到 package/ 根目录——重名时会被
+#       package/feeds/luci/ 下的 feed 符号链接 override（scan.mk 机制，实测无效）。
+#       正确做法：直接替换 feed 源目录内容，符号链接自动指向新版。
+echo -e "\n>> [L6] 拉取 kenzok8 版 luci-app-adguardhome 并替换 Lean feed 版"
 TMP_AGH="${LEDE_DIR}/.tmp_agh"
 rm -rf "$TMP_AGH"
 git clone --filter=blob:none --depth=1 --sparse -b master "$REPO_KENZOK8" "$TMP_AGH"
 cd "$TMP_AGH"
-git sparse-checkout set --no-cone adguardhome luci-app-adguardhome
+git sparse-checkout set --no-cone luci-app-adguardhome
 cd - >/dev/null
 
-if [ -d "${TMP_AGH}/adguardhome" ] && [ -d "${TMP_AGH}/luci-app-adguardhome" ]; then
-cp -r "${TMP_AGH}/adguardhome" "${LEDE_DIR}/package/"
-cp -r "${TMP_AGH}/luci-app-adguardhome" "${LEDE_DIR}/package/"
-echo ">> ✅ adguardhome + luci-app-adguardhome 已放入本地package，优先使用kenzok8版本"
+AGH_FEED_DIR="${LEDE_DIR}/feeds/luci/applications/luci-app-adguardhome"
+if [ -d "${TMP_AGH}/luci-app-adguardhome" ]; then
+  # 替换 feed 源目录：package/feeds/luci/luci-app-adguardhome 符号链接仍指向该路径，
+  # 包名/依赖关系/编译目录全部不变，仅内容换成 kenzok8 版
+  rm -rf "$AGH_FEED_DIR"
+  cp -r "${TMP_AGH}/luci-app-adguardhome" "${LEDE_DIR}/feeds/luci/applications/"
+  echo ">> ✅ kenzok8 版 luci-app-adguardhome 已替换 Lean feed 版（$AGH_FEED_DIR）"
 else
-echo "❌ ERROR: AdGuardHome目录检出失败，请核对仓库路径"
-exit 1
+  echo "❌ ERROR: kenzok8 luci-app-adguardhome 目录检出失败，请核对仓库路径"
+  exit 1
 fi
 rm -rf "$TMP_AGH"
 # =====================================================================================================
 
 # ---------- 【最终全局校验】----------
-CHECK_LIST=("${WANT_PKGS[@]}" luci-app-turboacc luci-app-bandix openwrt-bandix adguardhome luci-app-adguardhome)
+# 注意：luci-app-adguardhome 走 feed 源目录替换，需单独校验；adguardhome 二进制由 Lean feed 提供
+CHECK_LIST=("${WANT_PKGS[@]}" luci-app-turboacc luci-app-bandix openwrt-bandix)
 echo -e "\n>> [最终校验] 检查全部插件是否就绪"
 for pkg in "${CHECK_LIST[@]}"; do
 if ! find "${LEDE_DIR}/package" -maxdepth 3 -type d -name "$pkg" | grep -q .; then
@@ -169,4 +181,9 @@ echo "修复建议：检查该插件在上游仓库中的实际目录名"
 exit 1
 fi
 done
+if [ ! -f "$AGH_FEED_DIR/Makefile" ]; then
+echo "ERROR: luci-app-adguardhome feed 源目录替换失败，kenzok8 版未就位"
+echo "修复建议：检查 L6 段 git clone / sparse-checkout / cp 是否正常"
+exit 1
+fi
 echo -e "\n>> ✅ 多级源拉取流程全部完成！"
