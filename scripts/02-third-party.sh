@@ -170,13 +170,55 @@ fi
 rm -rf "$TMP_AGH"
 # =====================================================================================================
 
+# ======================【L7：OAF 全家桶配套替换（open-app-filter + luci-app-oaf 均用 kenzok8 版）】======
+# 背景：Lean feed 的 open-app-filter 是 destan19 官方版（/etc/config/appfilter 结构 + 官方 oafd/init.d），
+#       而 small-package 的 luci-app-oaf 7.0 是 kenzok8 适配版（/etc/config/fwx 结构 + fwx ubus 接口），
+#       两者后端与界面不配套，混搭会导致 OAF 状态全部显示 --（行为管理不生效）。
+#       Lean luci feed 无自带 luci-app-oaf，唯一配套组合为 kenzok8 全家桶：
+#       open-app-filter 7.0.1（appfilter 用户态）+ luci-app-oaf 7.0。
+# 做法：与 L6 同思路——直接替换 feed 源目录；luci-app-oaf 经 L3 已在 package/kenzok8-packages/。
+#       另：kenzok8 7.0.1 为纯用户态方案（无内核模块），去掉 luci-app-oaf 的 +kmod-oaf 依赖，
+#       否则依赖不可满足会被 defconfig 静默移除（config 已同步删除 CONFIG_PACKAGE_kmod-oaf）。
+echo -e "\n>> [L7] 拉取 kenzok8 版 open-app-filter 并替换 Lean feed 版（OAF 全家桶配套）"
+TMP_OAF="${LEDE_DIR}/.tmp_oaf"
+rm -rf "$TMP_OAF"
+git clone --filter=blob:none --depth=1 --sparse -b main "$REPO_SMALL" "$TMP_OAF"
+cd "$TMP_OAF"
+git sparse-checkout set --no-cone open-app-filter luci-app-oaf
+cd - >/dev/null
+
+OAF_FEED_DIR="${LEDE_DIR}/feeds/packages/net/open-app-filter"
+OAF_LUCI_DIR="${LEDE_DIR}/package/kenzok8-packages/luci-app-oaf"
+if [ -d "${TMP_OAF}/open-app-filter" ] && [ -d "${TMP_OAF}/luci-app-oaf" ]; then
+  # 1. 替换 open-app-filter feed 源目录（appfilter 7.0.1 用户态版）
+  rm -rf "$OAF_FEED_DIR"
+  cp -r "${TMP_OAF}/open-app-filter" "${LEDE_DIR}/feeds/packages/net/"
+  echo ">> ✅ kenzok8 版 open-app-filter 已替换 Lean feed 版（$OAF_FEED_DIR）"
+  # 2. 确保 luci-app-oaf 为 kenzok8 版（L3 通常已拉，此处兜底复制）
+  if [ ! -d "$OAF_LUCI_DIR" ]; then
+    mkdir -p "${LEDE_DIR}/package/kenzok8-packages"
+    cp -r "${TMP_OAF}/luci-app-oaf" "${LEDE_DIR}/package/kenzok8-packages/"
+  fi
+  # 3. 去掉 +kmod-oaf 依赖（纯用户态方案；依赖不可满足会被 defconfig 静默移除）
+  if [ -f "$OAF_LUCI_DIR/Makefile" ]; then
+    sed -i 's/+kmod-oaf //; s/+kmod-oaf//' "$OAF_LUCI_DIR/Makefile"
+    echo ">> ✅ luci-app-oaf 已去除 kmod-oaf 依赖（纯用户态方案）"
+  fi
+else
+  echo "❌ ERROR: kenzok8 open-app-filter/luci-app-oaf 目录检出失败，请核对仓库路径"
+  exit 1
+fi
+rm -rf "$TMP_OAF"
+# =====================================================================================================
+
 # ---------- 【最终全局校验】----------
-# 注意：luci-app-adguardhome 走 feed 源目录替换，需单独校验；adguardhome 二进制由 Lean feed 提供
+# 注意：luci-app-adguardhome / open-app-filter 走 feed 源目录替换，需单独校验；
+#       adguardhome 二进制由 Lean feed 提供；luci-app-oaf 在 package/kenzok8-packages/
 CHECK_LIST=("${WANT_PKGS[@]}" luci-app-turboacc luci-app-bandix openwrt-bandix)
 echo -e "\n>> [最终校验] 检查全部插件是否就绪"
 for pkg in "${CHECK_LIST[@]}"; do
 if ! find "${LEDE_DIR}/package" -maxdepth 3 -type d -name "$pkg" | grep -q .; then
-echo "ERROR: 插件 $pkg 经过L1/L2/L3/L4/L5/L6多级拉取后仍未找到，依赖不可用"
+echo "ERROR: 插件 $pkg 经过L1/L2/L3/L4/L5/L6/L7多级拉取后仍未找到，依赖不可用"
 echo "修复建议：检查该插件在上游仓库中的实际目录名"
 exit 1
 fi
@@ -185,5 +227,13 @@ if [ ! -f "$AGH_FEED_DIR/Makefile" ]; then
 echo "ERROR: luci-app-adguardhome feed 源目录替换失败，kenzok8 版未就位"
 echo "修复建议：检查 L6 段 git clone / sparse-checkout / cp 是否正常"
 exit 1
+fi
+if [ ! -f "$OAF_FEED_DIR/Makefile" ]; then
+echo "ERROR: open-app-filter feed 源目录替换失败，kenzok8 版未就位"
+echo "修复建议：检查 L7 段 git clone / sparse-checkout / cp 是否正常"
+exit 1
+fi
+if ! grep -q 'kmod-oaf' "$OAF_LUCI_DIR/Makefile" 2>/dev/null; then
+echo ">> 校验通过：luci-app-oaf 无 kmod-oaf 依赖残留"
 fi
 echo -e "\n>> ✅ 多级源拉取流程全部完成！"
