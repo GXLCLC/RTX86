@@ -64,4 +64,26 @@ uci set network.lan.ipaddr='${DEFAULT_LAN_IP}'
 uci commit network
 EOF
 
-echo ">> 自定义配置完成：IP=${DEFAULT_LAN_IP}（board.d 生成 + uci-defaults 兜底）/ 密码=${DEFAULT_PASSWORD:-无密码} / 主机名=${DEFAULT_HOSTNAME} / 时区=Asia/Shanghai"
+# ---------- 4. 从 Lean target 强制默认包集移除 DDNS 与 KMS ----------
+# 背景：Lean 的 include/target.mk 的 DEFAULT_PACKAGES.router 硬编码包含
+#   ddns-scripts_aliyun ddns-scripts_dnspod luci-app-ddns（DDNS 全家桶）
+#   luci-app-vlmcsd（KMS）
+# 这是 Makefile 层强制默认（DefaultPackage ?=y），.config 中无启用行也会
+# 默认编译进固件；kconfig 的 "# CONFIG_X is not set" 对该强制默认不可靠，
+# 必须从源头（target.mk）删除。
+TARGET_MK="${LEDE_DIR}/include/target.mk"
+if [ ! -f "$TARGET_MK" ]; then
+    echo "ERROR: 关键配置文件不存在 -> $TARGET_MK"
+    echo "修复建议：lean master 分支目录结构可能已调整，请核对源码路径"
+    exit 1
+fi
+sed -i 's/ddns-scripts_aliyun ddns-scripts_dnspod luci-app-ddns //' "$TARGET_MK"
+sed -i 's/ luci-app-vlmcsd//' "$TARGET_MK"
+if grep -qE 'ddns-scripts_aliyun|ddns-scripts_dnspod|luci-app-ddns|luci-app-vlmcsd' "$TARGET_MK"; then
+    echo "ERROR: DDNS/KMS 默认包移除失败，target.mk 中仍有残留"
+    echo "修复建议：检查上游是否调整了 DEFAULT_PACKAGES.router 的排版/换行"
+    exit 1
+fi
+echo ">> 已从 Lean 默认包集移除：ddns-scripts_aliyun / ddns-scripts_dnspod / luci-app-ddns / luci-app-vlmcsd"
+
+echo ">> 自定义配置完成：IP=${DEFAULT_LAN_IP}（board.d 生成 + uci-defaults 兜底）/ 密码=${DEFAULT_PASSWORD:-无密码} / 主机名=${DEFAULT_HOSTNAME} / 时区=Asia/Shanghai / 默认集已剔除DDNS与KMS"
