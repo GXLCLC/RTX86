@@ -5,8 +5,9 @@
 #  1. mwan3：清空预设成员/策略/规则，界面显示「尚未配置任何接口」
 #     （mwan3 包自带 /etc/config/mwan3 默认配置含 wan/wan6/wanb/wanb6 多接口示例，
 #      不清理会导致 mwan3 接管流量、网络不稳定）
-#  2. smartdns：默认禁用，关闭开机自启（默认配置 enabled=1 会抢占 DNS 通道，
-#     与 AdGuardHome 重定向冲突）
+#  2. smartdns：保留插件但默认禁用，且关闭 auto_set_dnsmasq（init.d 兜底默认 1，
+#     会自动把 dnsmasq 上游改成 127.0.0.1#53 并让出 53 端口，与 AdGuardHome
+#     重定向冲突）；同时清理 dnsmasq 侧残留，恢复 53 端口归属
 #  3. ttyd：明确端口 7681 / 监听 @lan + 防火墙放行 lan 访问
 # 注入机制（双通道，互为备份）：
 #   A. files/etc/init.d/zz-preconfig-fix（START=99，标记文件 /etc/preconfig-applied 防重复）
@@ -44,11 +45,27 @@ start() {
     rm -f /etc/config/mwan3
     /etc/init.d/mwan3 reload >/dev/null 2>&1 || true
 
-    # 2. smartdns：默认禁用 + 停止服务 + 关闭自启（释放 DNS 通道给 AdGuardHome）
+    # 2. smartdns：保留插件，默认禁用 + 关闭自动配置 dnsmasq + 杀进程 + 清理 dnsmasq 残留
+    #    （auto_set_dnsmasq 兜底默认 1，会自动把 dnsmasq 上游改为 127.0.0.1#53
+    #     并让出 53 端口，导致 AdGuardHome 重定向配不上；显式置 0 后即使
+    #     用户日后手动启用 smartdns 也不会再强改 dnsmasq）
     uci -q set smartdns.@smartdns[0].enabled='0' 2>/dev/null || true
+    uci -q set smartdns.@smartdns[0].auto_set_dnsmasq='0' 2>/dev/null || true
     uci -q commit smartdns 2>/dev/null || true
-    /etc/init.d/smartdns disable >/dev/null 2>&1 || true
+    # 清理 smartdns 可能在 dnsmasq 上游留下的 127.0.0.1#53 条目（精确删除，不动其他上游）
+    if uci -q get dhcp.@dnsmasq[0].server 2>/dev/null | grep -q '127.0.0.1#53'; then
+        uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#53'
+        uci -q commit dhcp
+    fi
+    # 恢复被让出的 53 端口给 dnsmasq（set_main_dns 曾把 port 置 0）
+    if [ "$(uci -q get dhcp.@dnsmasq[0].port)" = "0" ]; then
+        uci -q delete dhcp.@dnsmasq[0].port
+        uci -q commit dhcp
+    fi
+    killall smartdns >/dev/null 2>&1 || true
     /etc/init.d/smartdns stop >/dev/null 2>&1 || true
+    /etc/init.d/smartdns disable >/dev/null 2>&1 || true
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
 
     # 3. ttyd：明确端口/监听 + 防火墙放行 lan 访问 7681
     uci -q set ttyd.@ttyd[0].port='7681' 2>/dev/null || true
@@ -83,12 +100,23 @@ echo ">> ✅ [通道A] files/etc/init.d/zz-preconfig-fix 已写入（START=99，
 mkdir -p "${LEDE_DIR}/files/etc/uci-defaults"
 cat > "${LEDE_DIR}/files/etc/uci-defaults/99-preconfig-init" <<'UCI_SCRIPT'
 #!/bin/sh
-# 与 zz-preconfig-fix 逻辑保持一致：mwan3 空白 / smartdns 禁用 / ttyd 7681 放行
+# 与 zz-preconfig-fix 逻辑保持一致：mwan3 空白 / smartdns 禁用且不自动改 dnsmasq / ttyd 7681 放行
 # 由 /etc/init.d/boot 的 uci_apply_defaults 在首次开机执行，成功后自动删除。
 # 所有 uci 操作均带 -q 与兜底，避免 section 不存在时中断启动流程。
 rm -f /etc/config/mwan3
 uci -q set smartdns.@smartdns[0].enabled='0' 2>/dev/null || true
+uci -q set smartdns.@smartdns[0].auto_set_dnsmasq='0' 2>/dev/null || true
 uci -q commit smartdns 2>/dev/null || true
+if uci -q get dhcp.@dnsmasq[0].server 2>/dev/null | grep -q '127.0.0.1#53'; then
+    uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#53'
+    uci -q commit dhcp
+fi
+if [ "$(uci -q get dhcp.@dnsmasq[0].port)" = "0" ]; then
+    uci -q delete dhcp.@dnsmasq[0].port
+    uci -q commit dhcp
+fi
+killall smartdns >/dev/null 2>&1 || true
+/etc/init.d/smartdns stop >/dev/null 2>&1 || true
 /etc/init.d/smartdns disable >/dev/null 2>&1 || true
 uci -q set ttyd.@ttyd[0].port='7681' 2>/dev/null || true
 uci -q set ttyd.@ttyd[0].interface='@lan' 2>/dev/null || true
@@ -108,5 +136,5 @@ UCI_SCRIPT
 chmod +x "${LEDE_DIR}/files/etc/uci-defaults/99-preconfig-init"
 echo ">> ✅ [通道B] files/etc/uci-defaults/99-preconfig-init 已写入（首次开机快速路径）"
 
-echo ">> 预置配置注入完成：mwan3 空白 / smartdns 禁用 / ttyd 7681 + 防火墙放行"
+echo ">> 预置配置注入完成：mwan3 空白 / smartdns 默认禁用+不自动改dnsmasq / ttyd 7681 + 防火墙放行"
 echo ">> ==========================================="
